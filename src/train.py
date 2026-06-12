@@ -19,7 +19,11 @@ import json
 
 def get_architecture_hash(model):
     """Generates a hash based on the model architecture and hyperparameters."""
-    model_str = str(model)
+    # If model is compiled, get the original module to ensure hash consistency
+    if hasattr(model, '_orig_mod'):
+        model_str = str(model._orig_mod)
+    else:
+        model_str = str(model)
     return hashlib.sha256(model_str.encode()).hexdigest()[:12]
 
 class BridgeEmbeddingDataset(Dataset):
@@ -125,6 +129,12 @@ def visualize_trajectory(model, batch, device, step, output_dir="viz"):
     ty = start_pos[1] + np.cumsum(target_pos[:, 1])
     tz = start_pos[2] + np.cumsum(target_pos[:, 2])
 
+    # Log coordinate difference
+    dist = np.sqrt((px[-1]-tx[-1])**2 + (py[-1]-ty[-1])**2 + (pz[-1]-tz[-1])**2)
+    print(f"Final Step Distance (Predicted vs Target): {dist:.6f} meters")
+    print(f"Target Final Pos: [{tx[-1]:.4f}, {ty[-1]:.4f}, {tz[-1]:.4f}]")
+    print(f"Pred Final Pos: [{px[-1]:.4f}, {py[-1]:.4f}, {pz[-1]:.4f}]")
+
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
     ax.plot(tx, ty, tz, 'b--x', label='Ground Truth', alpha=0.6)
@@ -196,6 +206,9 @@ def train(overfit=False):
         sample = train_dataset[10]
         batch = {k: v.unsqueeze(0).to(device) for k, v in sample.items()}
         print(f"Target values (first 4): {batch['target'][0][:4].tolist()}")
+        
+        # Use plain AdamW for overfit to avoid any Muon instability
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.0)
         
         model.train()
         model.to(device)

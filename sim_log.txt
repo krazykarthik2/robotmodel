@@ -1,0 +1,64 @@
+pybullet build time: Jan 29 2025 23:16:28
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781262799.760060 3269664 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1781262799.807357 3269664 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX512_FP16 AVX_VNNI AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781262800.898982 3269664 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+Some kwargs in processor config are unused and will not have any effect: image_seq_len. 
+/home/jupyter-238w1a5447/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:716: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+Loading SmolVLM for real-time observations...
+Loading VLA model from robotmodel/models/checkpoints/latest.pt...
+
+--- Generating Video 1/5 ---
+Executing Randomized Task: put the red cube in the yellow bucket
+  Cycle 1/6: Predicting.../home/jupyter-238w1a5447/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:716: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+ Done.
+  Cycle 2/6: Predicting... Done.
+  Cycle 3/6: Predicting... Done.
+  Cycle 4/6: Predicting... Done.
+  Cycle 5/6: Predicting... Done.
+  Cycle 6/6: Predicting... Done.
+Simulation saved to viz/sim_video_1.mp4
+
+--- Generating Video 2/5 ---
+Executing Randomized Task: put the purple cube in the green bucket
+  Cycle 1/6: Predicting... Done.
+  Cycle 2/6: Predicting... Done.
+  Cycle 3/6: Predicting... Done.
+  Cycle 4/6: Predicting... Done.
+  Cycle 5/6: Predicting... Done.
+  Cycle 6/6: Predicting... Done.
+Simulation saved to viz/sim_video_2.mp4
+
+--- Generating Video 3/5 ---
+Executing Randomized Task: put the purple cube in the blue bucket
+  Cycle 1/6: Predicting... Done.
+  Cycle 2/6: Predicting... Done.
+  Cycle 3/6: Predicting... Done.
+  Cycle 4/6: Predicting... Done.
+  Cycle 5/6: Predicting... Done.
+  Cycle 6/6: Predicting... Done.
+Simulation saved to viz/sim_video_3.mp4
+
+--- Generating Video 4/5 ---
+Executing Randomized Task: put the blue cube in the yellow bucket
+  Cycle 1/6: Predicting... Done.
+  Cycle 2/6: Predicting... Done.
+  Cycle 3/6: Predicting... Done.
+  Cycle 4/6: Predicting... Done.
+  Cycle 5/6: Predicting... Done.
+  Cycle 6/6: Predicting... Done.
+Simulation saved to viz/sim_video_4.mp4
+
+--- Generating Video 5/5 ---
+Executing Randomized Task: put the red cube in the blue bucket
+  Cycle 1/6: Predicting... Done.
+  Cycle 2/6: Predicting... Done.
+  Cycle 3/6: Predicting... Done.
+  Cycle 4/6: Predicting... Done.
+  Cycle 5/6: Predicting... Done.
+  Cycle 6/6: Predicting... Done.
+Simulation saved to viz/sim_video_5.mp4

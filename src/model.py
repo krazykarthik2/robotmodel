@@ -87,7 +87,7 @@ class SmolVLA(nn.Module):
         )
         
         # Flow Head (Replaces TrajectoryHead)
-        self.flow_head = FlowHead(self.hidden_size)
+        self.flow_head = FlowHead(self.hidden_size).to(dtype=torch.float32)
         
         # Vision Projection: Map input embedding size (e.g. 768) to hidden_size (576)
         # This allows us to use different pre-extracted vision backbones (SigLIP, CLIP, etc.)

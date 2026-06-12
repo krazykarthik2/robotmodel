@@ -171,7 +171,8 @@ class FloatingSim:
             state_tensor = torch.tensor([[actual_pos[0], actual_pos[1], actual_pos[2], 1.0]], dtype=torch.float32).to(self.device)
 
             with torch.no_grad():
-                pred_traj = self.vla_model(vision_emb, state_tensor, input_ids)
+                # Use Euler solver for CFM inference
+                pred_traj = self.vla_model.predict_action(vision_emb, state_tensor, input_ids, num_steps=16)
                 trajectory = pred_traj.view(16, 4).cpu().numpy()
             print(" Done.", flush=True)
 
