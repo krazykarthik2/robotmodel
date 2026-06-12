@@ -17,6 +17,6 @@ echo "=== Stage 1: Preprocessing Full Dataset ==="
 python3 src/dataset_prep.py --data_root $DATA_DIR --output_dir $PROCESSED_DIR
 
 echo "=== Stage 2: Training on Full Processed Data ==="
-./scripts/run_train.sh
+./scripts/run_train.sh --full
 
 echo "=== Full Pipeline Complete ==="

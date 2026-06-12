@@ -15,6 +15,7 @@ import imageio
 import mujoco
 import glob
 import matplotlib.pyplot as plt
+import json
 
 def get_architecture_hash(model):
     """Generates a hash based on the model architecture and hyperparameters."""
@@ -53,27 +54,41 @@ class BridgeEmbeddingDataset(Dataset):
                 print(f"future_trajectory shape: {row['future_trajectory'].shape}")
             raise e
 
-def loss_fn(pred, target):
-    # Ensure high precision for loss calculation, especially for small deltas
-    pred = pred.view(-1, 16, 4).float()
-    target = target.view(-1, 16, 4).float()
+def loss_fn(model, batch, device):
+    vision = batch['vision'].to(device)
+    state = batch['state'].to(device)
+    input_ids = batch['input_ids'].to(device)
+    x1 = batch['target'].to(device) # Target trajectory [B, 64]
     
-    # Scale position loss. With Z-score normalization, targets are unit variance,
-    # so a weight of 1.0-10.0 is usually sufficient. 
-    pos_loss = F.mse_loss(pred[:, :, :3], target[:, :, :3]) * 10.0
+    batch_size = x1.shape[0]
     
-    # Gripper is a binary state, BCE is appropriate
-    gripper_pred = torch.sigmoid(pred[:, :, 3])
-    gripper_target = torch.clamp(target[:, :, 3], 0.0, 1.0)
-    gripper_loss = F.binary_cross_entropy(gripper_pred, gripper_target)
+    # 1. Sample tau ~ Uniform(0, 1)
+    tau = torch.rand(batch_size, 1, device=device)
     
-    return pos_loss + gripper_loss
+    # 2. Sample noise x0 ~ N(0, I)
+    x0 = torch.randn_like(x1)
+    
+    # 3. Compute noisy action x_tau = tau * x1 + (1 - tau) * x0
+    xt = tau * x1 + (1.0 - tau) * x0
+    
+    # 4. Predict velocity field
+    # SmolVLA forward returns velocity when noisy_actions and tau are provided
+    pred_v = model(vision, state, input_ids, noisy_actions=xt, tau=tau)
+    
+    # 5. Target velocity is (x1 - x0)
+    target_v = x1 - x0
+    
+    # Loss is MSE between predicted and target velocity
+    # Flow matching is typically calculated in FP32
+    loss = F.mse_loss(pred_v.float(), target_v.float())
+    
+    return loss
 
 def visualize_trajectory(model, batch, device, step, output_dir="viz"):
     """Generates a visualization plot comparing predicted and target trajectories."""
     os.makedirs(output_dir, exist_ok=True)
     
-    # Use uncompiled model if available to avoid dynamo errors during eval
+    # Use uncompiled model if available
     if hasattr(model, '_orig_mod'):
         eval_model = model._orig_mod
     else:
@@ -85,17 +100,21 @@ def visualize_trajectory(model, batch, device, step, output_dir="viz"):
         state = batch['state'][0:1].to(device)
         input_ids = batch['input_ids'][0:1].to(device)
         
-        pred = eval_model(vision, state, input_ids)
+        # Use Euler integration for inference
+        pred = eval_model.predict_action(vision, state, input_ids, num_steps=16)
         pred = pred.view(16, 4).cpu().numpy()
         target = batch['target'][0].view(16, 4).cpu().numpy()
         start_pos = state[0, :3].cpu().numpy()
 
-    # De-normalize (Z-score stats)
-    ACTION_MEAN = np.array([0.0026, -0.0042, -0.0018], dtype=np.float32)
-    ACTION_STD  = np.array([0.0085, 0.0112, 0.0168], dtype=np.float32)
+    # De-normalize (Quantile stats)
+    with open("norm_stats.json", "r") as f:
+        stats = json.load(f)
+    Q01 = np.array(stats["q01"], dtype=np.float32)[:3]
+    Q99 = np.array(stats["q99"], dtype=np.float32)[:3]
     
-    pred_pos = (pred[:, :3] * ACTION_STD) + ACTION_MEAN
-    target_pos = (target[:, :3] * ACTION_STD) + ACTION_MEAN
+    # pred_pos = (pred[:, :3] + 1.0) / 2.0 * (Q99 - Q01) + Q01
+    pred_pos = (pred[:, :3] + 1.0) * (Q99 - Q01) / 2.0 + Q01
+    target_pos = (target[:, :3] + 1.0) * (Q99 - Q01) / 2.0 + Q01
 
     # Integrate deltas
     px = start_pos[0] + np.cumsum(pred_pos[:, 0])
@@ -111,7 +130,7 @@ def visualize_trajectory(model, batch, device, step, output_dir="viz"):
     ax.plot(tx, ty, tz, 'b--x', label='Ground Truth', alpha=0.6)
     ax.plot(px, py, pz, 'r-o', label='Predicted')
     ax.scatter(start_pos[0], start_pos[1], start_pos[2], color='green', s=100)
-    ax.set_title(f'Step {step} Trajectory')
+    ax.set_title(f'Step {step} Trajectory (Flow Matching)')
     ax.legend()
     
     plt.savefig(f"{output_dir}/step_{step}.png")
@@ -163,12 +182,12 @@ def train(overfit=False):
             shutil.rmtree(checkpoint_dir)
             os.makedirs(checkpoint_dir, exist_ok=True)
 
-    optimizer = MuonWithAuxAdam(model, lr=1e-3, adam_lr=3e-4)
+    optimizer = MuonWithAuxAdam(model, lr=1e-3, adam_lr=1e-4) # Lower Adam LR for stability
     
     # Dataset
-    data_path = "/home/jupyter-238w1a5447/robotmodel/data/processed"
-    if not os.path.exists(data_path) or not os.listdir(data_path):
-        data_path = "/home/jupyter-238w1a5447/robotmodel/data/processed_bridge.parquet"
+    data_path = "/home/jupyter-238w1a5447/robotmodel/data/processed/train.parquet"
+    if not os.path.exists(data_path):
+        data_path = "/home/jupyter-238w1a5447/robotmodel/data/processed"
         
     train_dataset = BridgeEmbeddingDataset(data_path)
     
@@ -180,18 +199,27 @@ def train(overfit=False):
         
         model.train()
         model.to(device)
-        pbar = tqdm(range(500), desc="Overfitting")
+        # Increase steps for CFM which is slower than regression
+        pbar = tqdm(range(10000), desc="Overfitting")
         for step in pbar:
             optimizer.zero_grad()
-            outputs = model(batch['vision'], batch['state'], batch['input_ids'])
-            loss = loss_fn(outputs, batch['target'])
+            loss = loss_fn(model, batch, device)
             accelerator.backward(loss)
             optimizer.step()
-            pbar.set_postfix({"loss": f"{loss.item():.6f}"})
+            if step % 500 == 0:
+                pbar.set_postfix({"loss": f"{loss.item():.6f}"})
         
         # Save one visualization of the overfit
         visualize_trajectory(model, batch, device, "overfit")
-        print("Overfit complete. Result saved to viz/step_overfit.png")
+        
+        # Save Checkpoint after overfit
+        checkpoint = {
+            "step": 500,
+            "model_state": accelerator.get_state_dict(model),
+            "arch_version": arch_version
+        }
+        torch.save(checkpoint, ckpt_path)
+        print(f"Overfit complete. Result saved to viz/step_overfit.png and {ckpt_path}")
         return
 
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
@@ -199,7 +227,7 @@ def train(overfit=False):
 
     print(f"Starting training (Version: {arch_version}) on {device}")
     
-    pbar = tqdm(range(start_step, 10000), desc="Training", disable=not accelerator.is_main_process)
+    pbar = tqdm(range(start_step, 20000), desc="Training", disable=not accelerator.is_main_process)
     train_iter = iter(train_loader)
     
     model.train()
@@ -213,8 +241,7 @@ def train(overfit=False):
             batch = next(train_iter)
 
         optimizer.zero_grad()
-        outputs = model(batch['vision'], batch['state'], batch['input_ids'])
-        loss = loss_fn(outputs, batch['target'])
+        loss = loss_fn(model, batch, device)
         accelerator.backward(loss)
         optimizer.step()
         
@@ -246,10 +273,16 @@ def train(overfit=False):
 
 if __name__ == "__main__":
     import argparse
+    import sys
+    print(f"DEBUG: Command line arguments: {sys.argv}")
     parser = argparse.ArgumentParser()
     # Default is now OVERFIT mode as requested by user
     parser.add_argument("--full", action="store_true", help="Run full training on entire dataset (instead of default overfit)")
     args = parser.parse_args()
     
-    # If --full is NOT passed, overfit is True
+    if args.full:
+        print("!!! MODE: FULL TRAINING ON ENTIRE DATASET !!!")
+    else:
+        print("!!! MODE: OVERFIT ON SINGLE SAMPLE !!!")
+        
     train(overfit=not args.full)

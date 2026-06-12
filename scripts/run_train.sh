@@ -15,11 +15,11 @@ export NCCL_IB_DISABLE=1
 export NCCL_DEBUG=INFO
 
 echo "Attempting to launch training on 2 GPUs..."
-# Overfit is now default, so we just pass arguments (like --full if they want the whole set)
-accelerate launch --multi_gpu --num_processes 2 src/train.py "$@"
+# We pass --full to run on everything. "$@" allows users to pass extra flags.
+accelerate launch --multi_gpu --num_processes 2 src/train.py --full "$@"
 
 if [ $? -ne 0 ]; then
     echo "Multi-GPU launch failed (likely due to NCCL/Driver mismatch)."
-    echo "Falling back to single-GPU training (Default: Overfit Mode)..."
-    python3 src/train.py "$@"
+    echo "Falling back to single-GPU training (Full Mode)..."
+    python3 src/train.py --full "$@"
 fi

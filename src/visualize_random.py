@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from transformers import AutoTokenizer, AutoProcessor
 from src.model import SmolVLA
 import pandas as pd
 import imageio
@@ -55,6 +56,9 @@ def generate_visualizations(checkpoint_path, data_dir, output_prefix="viz/random
     model.eval()
     
     # 3. Prepare Input
+    processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
+    tokenizer = processor.tokenizer
+    
     vision = torch.tensor(np.array(row['vision_embedding'], dtype=np.float32)).unsqueeze(0).to(device)
     state = torch.tensor(np.array(row['current_eef'], dtype=np.float32)).unsqueeze(0).to(device)
     input_ids = torch.tensor(np.array(row['input_ids'], dtype=np.int64)).unsqueeze(0).to(device)
@@ -70,12 +74,9 @@ def generate_visualizations(checkpoint_path, data_dir, output_prefix="viz/random
     # 5. Integrate Deltas for 3D Plotting
     start_pos = state[0, :3].cpu().numpy()
     
-    # Ground truth (ensure 16x4)
-    target = np.array(row['future_trajectory']).reshape(16, 4)
-    
-    # De-normalize (Z-score stats)
-    ACTION_MEAN = np.array([0.0026, -0.0042, -0.0018], dtype=np.float32)
-    ACTION_STD  = np.array([0.0085, 0.0112, 0.0168], dtype=np.float32)
+    # De-normalize (Exact high-precision stats)
+    ACTION_MEAN = np.array([0.00043198, 0.00029432, 0.00088205], dtype=np.float32)
+    ACTION_STD  = np.array([0.01033815, 0.01570009, 0.01481095], dtype=np.float32)
     
     pred_pos = (pred[:, :3] * ACTION_STD) + ACTION_MEAN
     target_pos = (target[:, :3] * ACTION_STD) + ACTION_MEAN

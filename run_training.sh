@@ -14,4 +14,4 @@ echo "=== Stage 1: Preprocessing (Extracting SigLIP Embeddings) ==="
 python3 src/dataset_prep.py --data_root $DATA_DIR --output_dir $PROCESSED_DIR
 
 echo "=== Stage 2: Launching Training ==="
-./scripts/run_train.sh
+./scripts/run_train.sh --full

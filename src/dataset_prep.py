@@ -3,19 +3,19 @@ import numpy as np
 import pandas as pd
 import imageio
 import json
-from transformers import SiglipModel, SiglipProcessor, AutoTokenizer
 from tqdm import tqdm
 import os
 import glob
 from accelerate import Accelerator
+from transformers import AutoProcessor, AutoModelForVision2Seq, AutoTokenizer
 
 def process_dataset(data_root, output_dir, limit_episodes=None):
     accelerator = Accelerator()
     device = accelerator.device
-    
+
     tasks_path = os.path.join(data_root, "meta/tasks.jsonl")
     info_path = os.path.join(data_root, "meta/info.json")
-    
+
     print(f"Loading tasks from {tasks_path}")
     tasks = {}
     if os.path.exists(tasks_path):
@@ -27,9 +27,16 @@ def process_dataset(data_root, output_dir, limit_episodes=None):
         print("Warning: tasks.jsonl not found. Using empty tasks.")
 
     print("Loading models...")
-    vision_model = SiglipModel.from_pretrained("google/siglip-base-patch16-224").to(device).eval()
-    processor = SiglipProcessor.from_pretrained("google/siglip-base-patch16-224")
-    tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-360M")
+    # Load the native SmolVLM processor and model (we only need the vision tower for embeddings)
+    processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
+    # Load the full model to access its specific vision encoder
+    vlm_model = AutoModelForVision2Seq.from_pretrained(
+        "HuggingFaceTB/SmolVLM-256M-Instruct", 
+        torch_dtype=torch.bfloat16
+    ).to(device).eval()
+
+    # SmolVLM uses SmolLM2 under the hood, but let's use the processor's tokenizer to be safe
+    tokenizer = processor.tokenizer
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
@@ -106,9 +113,15 @@ def process_dataset(data_root, output_dir, limit_episodes=None):
                 except StopIteration:
                     break
                     
-                inputs = processor(images=[frame], return_tensors="pt").to(device)
+                inputs = processor(images=[frame], size={"longest_edge": 512}, return_tensors="pt").to(device, dtype=torch.bfloat16)
                 with torch.no_grad():
-                    vision_emb = vision_model.get_image_features(**inputs).cpu().numpy().flatten()
+                    # Extract vision embeddings directly from the SmolVLM vision tower
+                    # Ensure 4D shape: [B * num_images, C, H, W]
+                    pixel_values = inputs.pixel_values.view(-1, inputs.pixel_values.shape[-3], inputs.pixel_values.shape[-2], inputs.pixel_values.shape[-1])
+                    vision_outputs = vlm_model.model.vision_model(pixel_values=pixel_values)
+                    # Pass through the native multi-modal projector (reduces 729 tokens to 81 tokens via pixel shuffle)
+                    v_tokens = vlm_model.model.connector(vision_outputs.last_hidden_state)
+                    vision_emb = v_tokens.cpu().to(torch.float32).numpy().flatten()
                     
                 instruction = tasks.get(row['task_index'], "unknown task")
                 input_ids = tokenizer(instruction, return_tensors="pt", padding='max_length', max_length=32, truncation=True).input_ids.numpy().flatten()
@@ -122,21 +135,29 @@ def process_dataset(data_root, output_dir, limit_episodes=None):
                 future_actions = df.iloc[i:i+16]['action'].tolist()
                 traj = np.zeros((16, 4), dtype=np.float32)
                 
-                # Normalization stats for position deltas [x, y, z]
-                # Calculated from BridgeData V2 subset
-                ACTION_MEAN = np.array([0.0026, -0.0042, -0.0018], dtype=np.float32)
-                ACTION_STD  = np.array([0.0085, 0.0112, 0.0168], dtype=np.float32)
+                # Normalization stats
+                with open("norm_stats.json", "r") as f:
+                    stats = json.load(f)
+                
+                Q01 = np.array(stats["q01"], dtype=np.float32)
+                Q99 = np.array(stats["q99"], dtype=np.float32)
                 
                 for j, act in enumerate(future_actions):
                     # act is [x, y, z, roll, pitch, yaw, gripper]
-                    # Z-score normalize x,y,z
-                    norm_pos = (np.array(act[:3], dtype=np.float32) - ACTION_MEAN) / ACTION_STD
-                    traj[j] = np.array([
-                        norm_pos[0],
-                        norm_pos[1],
-                        norm_pos[2],
-                        act[6] # gripper remains 0-1
-                    ], dtype=np.float32)
+                    # We only care about [x, y, z, gripper]
+                    raw_act = np.array([act[0], act[1], act[2], act[6]], dtype=np.float32)
+                    
+                    # Quantile Normalize to [-1, 1]
+                    # formula: 2 * (x - Q01) / (Q99 - Q01) - 1
+                    # Robust version to avoid division by zero
+                    range_val = Q99 - Q01
+                    range_val[range_val == 0] = 1.0
+                    norm_act = 2.0 * (raw_act - Q01) / range_val - 1.0
+                    
+                    # Clip to [-1, 1] as per pi0 methodology
+                    norm_act = np.clip(norm_act, -1.0, 1.0)
+                    
+                    traj[j] = norm_act
                 if len(future_actions) < 16:
                     # Pad with zero deltas (stay in place)
                     for j in range(len(future_actions), 16):
@@ -154,6 +175,8 @@ def process_dataset(data_root, output_dir, limit_episodes=None):
                 df_out.to_parquet(episode_output_path)
                 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"Error processing {parquet_path}: {e}")
             continue
 

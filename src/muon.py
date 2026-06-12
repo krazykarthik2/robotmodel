@@ -95,7 +95,13 @@ class MuonWithAuxAdam(optim.Optimizer):
         for name, p in model.named_parameters():
             if not p.requires_grad:
                 continue
-            if p.ndim >= 2 and "embed" not in name and "head" not in name and "norm" not in name:
+            
+            # Transformer backbone weights (2D) use Muon
+            # Embeddings, norms, output heads, custom projectors, and LoRA adapters use AdamW
+            is_backbone = "layers" in name
+            is_excluded = any(x in name for x in ["embed", "head", "norm", "proj", "lora"])
+            
+            if p.ndim >= 2 and is_backbone and not is_excluded:
                 muon_params.append(p)
             else:
                 adam_params.append(p)
