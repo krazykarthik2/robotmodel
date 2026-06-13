@@ -65,29 +65,37 @@ def generate_visualizations(checkpoint_path, data_dir, output_prefix="viz/random
     
     # 4. Predict
     with torch.no_grad():
-        pred = model(vision, state, input_ids)
+        # Use predict_action (Euler Solver) instead of forward()
+        pred = model.predict_action(vision, state, input_ids, num_steps=16)
         pred = pred.view(16, 4).cpu().numpy()
         
         # Ground truth (ensure 16x4)
         target = np.array(row['future_trajectory']).reshape(16, 4)
 
     # 5. Integrate Deltas for 3D Plotting
-    start_pos = state[0, :3].cpu().numpy()
+    # Canonical Scaling (1.0 = workspace half-range)
+    SCALES = np.array([0.2, 0.4, 0.25], dtype=np.float32)
+    OFFSET = np.array([0.4, 0.0, 0.25], dtype=np.float32)
     
-    # De-normalize (Exact high-precision stats)
-    ACTION_MEAN = np.array([0.00043198, 0.00029432, 0.00088205], dtype=np.float32)
-    ACTION_STD  = np.array([0.01033815, 0.01570009, 0.01481095], dtype=np.float32)
+    start_pos_norm = state[0, :3].cpu().numpy()
+    start_pos_phys = (start_pos_norm * SCALES) + OFFSET
     
-    pred_pos = (pred[:, :3] * ACTION_STD) + ACTION_MEAN
-    target_pos = (target[:, :3] * ACTION_STD) + ACTION_MEAN
+    # Action Scaling (Using real movement stats ~3cm range)
+    # Using the same Q01/Q99 as in src/sim_viz.py
+    Q01 = np.array([-0.0290, -0.0449, -0.0303], dtype=np.float32)
+    Q99 = np.array([0.0273, 0.0456, 0.0522], dtype=np.float32)
+    range_act = Q99 - Q01
     
-    tx = start_pos[0] + np.cumsum(target_pos[:, 0])
-    ty = start_pos[1] + np.cumsum(target_pos[:, 1])
-    tz = start_pos[2] + np.cumsum(target_pos[:, 2])
+    pred_pos_phys = (pred[:, :3] + 1.0) / 2.0 * range_act + Q01
+    target_pos_phys = (target[:, :3] + 1.0) / 2.0 * range_act + Q01
     
-    px = start_pos[0] + np.cumsum(pred_pos[:, 0])
-    py = start_pos[1] + np.cumsum(pred_pos[:, 1])
-    pz = start_pos[2] + np.cumsum(pred_pos[:, 2])
+    tx = start_pos_phys[0] + np.cumsum(target_pos_phys[:, 0])
+    ty = start_pos_phys[1] + np.cumsum(target_pos_phys[:, 1])
+    tz = start_pos_phys[2] + np.cumsum(target_pos_phys[:, 2])
+    
+    px = start_pos_phys[0] + np.cumsum(pred_pos_phys[:, 0])
+    py = start_pos_phys[1] + np.cumsum(pred_pos_phys[:, 1])
+    pz = start_pos_phys[2] + np.cumsum(pred_pos_phys[:, 2])
 
     # Figure size 10.24x8 results in 1024x800 pixels (divisible by 16)
     fig = plt.figure(figsize=(10.24, 8), dpi=100)
@@ -95,7 +103,7 @@ def generate_visualizations(checkpoint_path, data_dir, output_prefix="viz/random
     
     ax.plot(tx, ty, tz, 'b--x', label='Ground Truth', markersize=4, alpha=0.6)
     ax.plot(px, py, pz, 'r-o', label='Predicted', markersize=4)
-    ax.scatter(start_pos[0], start_pos[1], start_pos[2], color='green', s=100, label='Start')
+    ax.scatter(start_pos_phys[0], start_pos_phys[1], start_pos_phys[2], color='green', s=100, label='Start')
     
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
