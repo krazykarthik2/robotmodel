@@ -1,0 +1,38 @@
+[
+  {
+    "prompt": "pick the red cube",
+    "skill": "pick",
+    "success": true,
+    "video": "C:\\Users\\karthikkrazy\\Downloads\\crsr\\robotmodel\\viz\\pick.mp4",
+    "picked": true,
+    "placed": false,
+    "pushed": false
+  },
+  {
+    "prompt": "put the cube on the plate",
+    "skill": "place",
+    "success": true,
+    "video": "C:\\Users\\karthikkrazy\\Downloads\\crsr\\robotmodel\\viz\\place.mp4",
+    "picked": false,
+    "placed": true,
+    "pushed": true
+  },
+  {
+    "prompt": "push the cube to the side",
+    "skill": "push",
+    "success": true,
+    "video": "C:\\Users\\karthikkrazy\\Downloads\\crsr\\robotmodel\\viz\\push.mp4",
+    "picked": false,
+    "placed": false,
+    "pushed": true
+  },
+  {
+    "prompt": "pick the cube and put it on the plate",
+    "skill": "place",
+    "success": true,
+    "video": "C:\\Users\\karthikkrazy\\Downloads\\crsr\\robotmodel\\viz\\pick_place.mp4",
+    "picked": false,
+    "placed": true,
+    "pushed": true
+  }
+]
