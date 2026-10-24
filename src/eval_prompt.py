@@ -30,25 +30,41 @@ def _load_fast():
     return pol
 
 
-def _smolvla_action(obs, instruction: str):
-    try:
-        from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-    except Exception:
+def _smolvla_action(obs, instruction: str, policy_holder=[None]):
+    if policy_holder[0] is None:
         try:
+            import transformers.utils
+            if not hasattr(transformers.utils, "torch_compilable_check"):
+                transformers.utils.torch_compilable_check = lambda f: f
+            import huggingface_hub
+            huggingface_hub.sync_bucket = lambda *args, **kwargs: None
             from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-        except Exception:
+            ckpt = ROOT / "models" / "smolvla_lora"
+            path = str(ckpt if ckpt.exists() else "lerobot/smolvla_base")
+            pol = SmolVLAPolicy.from_pretrained(path)
+            pol.config.num_steps = 4
+            pol.config.adapt_to_pi_aloha = False
+            policy_holder[0] = pol
+        except Exception as exc:
+            print(f"smolvla load failed: {exc}")
             return None
-    ckpt = ROOT / "models" / "smolvla_lora"
-    path = str(ckpt if ckpt.exists() else "lerobot/smolvla_base")
+
     try:
-        policy = SmolVLAPolicy.from_pretrained(path)
-        policy.config.num_steps = 4
+        import torch
+        pol = policy_holder[0]
+        tok = pol.model.vlm_with_expert.processor.tokenizer
+        enc = tok(instruction, return_tensors="pt")
+        img_rgb = obs["observation.images.front"]
+        img_t = torch.from_numpy(img_rgb).permute(2, 0, 1).float().unsqueeze(0) / 255.0
+        state_t = torch.from_numpy(obs["observation.state"]).float().unsqueeze(0)
         batch = {
-            "observation.images.front": obs["observation.images.front"],
-            "observation.state": obs["observation.state"],
-            "task": instruction,
+            "observation.images.camera1": img_t,
+            "observation.state": state_t,
+            "observation.language.tokens": enc["input_ids"],
+            "observation.language.attention_mask": enc["attention_mask"].bool(),
         }
-        return np.asarray(policy.select_action(batch), dtype=np.float32).reshape(-1)[:5]
+        act = pol.select_action(batch)
+        return act[0, :5].detach().cpu().numpy()
     except Exception as exc:
         print(f"smolvla infer skipped: {exc}")
         return None
