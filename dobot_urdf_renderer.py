@@ -139,9 +139,12 @@ class DobotURDFRenderer:
         # Project Live Calibrated Camera POV directly onto the workspace table surface
         if table_texture is not None:
             try:
+                # Correct the 90 degree CCW misalignment by rotating 90 degrees Clockwise
+                tex_corrected = cv2.rotate(table_texture, cv2.ROTATE_90_CLOCKWISE)
+
                 # Downsample table_texture to 48x48 vertex color grid (smooth, ultra-fast, 100% native OpenGL compatible)
                 grid_size = 48
-                tex_rgb = cv2.cvtColor(table_texture, cv2.COLOR_BGR2RGB) if len(table_texture.shape) == 3 else table_texture
+                tex_rgb = cv2.cvtColor(tex_corrected, cv2.COLOR_BGR2RGB) if len(tex_corrected.shape) == 3 else tex_corrected
                 sampled = cv2.resize(tex_rgb, (grid_size, grid_size), interpolation=cv2.INTER_AREA)
 
                 half_s = workspace_size_m / 2.0

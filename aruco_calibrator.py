@@ -38,19 +38,41 @@ class ArucoAutoCalibrator:
         self.ws_w_mm = 360.0
         self.ws_h_mm = 360.0
 
+        # Physical layout: ArUco markers are placed directly in front of the Dobot base with NO gap!
+        # Dobot base extends ~80mm from origin (0, 0).
+        # The 2x2 contiguous cluster of 80mm markers starts immediately at X = 80mm.
+        # Cluster spans from X = 80mm to X = 240mm (Center at X = 160mm).
+        # Lateral span from Y = -80mm to Y = +80mm (Center at Y = 0mm).
+        # In a 360mm x 360mm workspace view [X: 40mm to 400mm, Y: -180mm to +180mm]:
+        # Center of cluster is at 160mm along X, 0mm along Y.
+        # Top row (closest to Dobot base, X = 80 + 40 = 120 mm):
+        # - ID 0: Top-Left (X = 120mm, Y = +40mm)
+        # - ID 1: Top-Right (X = 120mm, Y = -40mm)
+        # Bottom row (further from Dobot base, X = 120 + 80 = 200 mm):
+        # - ID 3: Bottom-Left (X = 200mm, Y = +40mm)
+        # - ID 2: Bottom-Right (X = 200mm, Y = -40mm)
+
         w, h = output_size
-        cx_px, cy_px = w / 2.0, h / 2.0
+        cx_px = w / 2.0
+        # In camera frame, top is Dobot base (X=40mm), bottom is front (X=400mm):
+        # Marker center X=120mm is at (120 - 40) / 360 = 22.2% from top
+        # Marker center X=200mm is at (200 - 40) / 360 = 44.4% from top
+        # Marker center Y=-40mm is at (180 - 40) / 360 = 38.9% from left
+        # Marker center Y=+40mm is at (180 + 40) / 360 = 61.1% from left
         scale_x = w / self.ws_w_mm
         scale_y = h / self.ws_h_mm
 
-        # ArUco cluster (160mm x 160mm) is placed at the front/center of the robot table.
-        # Center of markers is (-40, -40), (+40, -40), (+40, +40), (-40, +40) mm relative to cluster center.
-        # Projecting into the full 360mm x 360mm workspace so the ENTIRE table and objects are in view:
+        # Destination pixel coordinates mapping the 4 marker centers touching the base:
+        y_top_px = (120.0 - 40.0) * scale_y
+        y_bot_px = (200.0 - 40.0) * scale_y
+        x_left_px = (180.0 - 40.0) * scale_x
+        x_rght_px = (180.0 + 40.0) * scale_x
+
         self.dst_center_pts = np.array([
-            [cx_px - 40.0 * scale_x, cy_px - 40.0 * scale_y], # ID 0: Top-Left center
-            [cx_px + 40.0 * scale_x, cy_px - 40.0 * scale_y], # ID 1: Top-Right center
-            [cx_px + 40.0 * scale_x, cy_px + 40.0 * scale_y], # ID 2: Bottom-Right center
-            [cx_px - 40.0 * scale_x, cy_px + 40.0 * scale_y]  # ID 3: Bottom-Left center
+            [x_left_px, y_top_px], # ID 0: Top-Left (touching base, left)
+            [x_rght_px, y_top_px], # ID 1: Top-Right (touching base, right)
+            [x_rght_px, y_bot_px], # ID 2: Bottom-Right (forward, right)
+            [x_left_px, y_bot_px]  # ID 3: Bottom-Left (forward, left)
         ], dtype=np.float32)
 
         # Full table workspace outer corners
