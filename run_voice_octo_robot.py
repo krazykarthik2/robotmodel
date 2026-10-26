@@ -260,15 +260,15 @@ def main():
                 target_z = float(np.clip(cur_pose['z'] + dz_mm, 20.0, 160.0))
 
                 print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f} | Grip: {grip_val:.2f}")
-                dobot.move_to_xyz(target_x, target_y, target_z)
+                # Use wait=True so the physical robot actually finishes moving to target before the next action is commanded
+                dobot.move_to_xyz(target_x, target_y, target_z, wait=True)
 
                 if grip_val > 0.5:
                     dobot.set_gripper("close")
                 else:
                     dobot.set_gripper("open")
 
-                cur_pose = {"x": target_x, "y": target_y, "z": target_z}
-                time.sleep(0.15)
+                cur_pose = dobot.get_pose()
 
         # Explicitly stop suction and release gripper after task rollout finishes
         dobot.set_suction(False)
