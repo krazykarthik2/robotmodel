@@ -4,6 +4,7 @@ import numpy as np
 import trimesh
 import pyrender
 import cv2
+import PIL.Image
 
 DOBOT_MESH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "dobot_magician_ros2", "dobot_description", "meshes", "dae"))
 
@@ -119,25 +120,61 @@ class DobotURDFRenderer:
             "jaw_r": pyrender.Mesh.from_trimesh(trimesh.Trimesh(vertices=self.raw_meshes["jaw_r"].vertices, faces=self.raw_meshes["jaw_r"].faces), material=self.mat_robot_silver, smooth=True),
         }
 
-    def build_scene(self, transforms, cube_pos=None, cube_color_rgb=None, plat_pos=None, plat_color_rgb=None, distractor_cubes=None, distractor_plats=None, end_effector="suction"):
-        scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.4, 0.4, 0.4])
+    def build_scene(self, transforms, cube_pos=None, cube_color_rgb=None, plat_pos=None, plat_color_rgb=None,
+                    distractor_cubes=None, distractor_plats=None, end_effector="suction",
+                    table_texture=None, workspace_size_m=0.36):
+        scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.45, 0.45, 0.45])
 
         # 1. Physical Table Surface
         # Ground-truth table plane from physical Dobot measurement:
         # With sucker resting on table, hardware measures: EE Z = -69.2 mm (-0.0692 m).
         # Sucker extends 80mm downwards -> Sucker tip touches table at Z = -0.0692 - 0.080 = -0.1492 m.
-        # Therefore, the top surface of the table is at exactly Z = -0.1492 m in the URDF world frame.
         table_top_z = -0.1492
         table_thick = 0.020
-        table_mesh = trimesh.creation.box(extents=[0.55, 0.55, table_thick])
-        mat_table = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.18, 0.20, 0.25, 1.0], roughnessFactor=0.8)
+        table_mesh = trimesh.creation.box(extents=[0.58, 0.58, table_thick])
+        mat_table = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.14, 0.16, 0.20, 1.0], roughnessFactor=0.9)
         table_node = pyrender.Mesh.from_trimesh(trimesh.Trimesh(table_mesh.vertices, table_mesh.faces), material=mat_table, smooth=False)
-        scene.add(table_node, pose=self.make_transform([0.20, 0.0, table_top_z - table_thick/2.0], [0, 0, 0]))
+        scene.add(table_node, pose=self.make_transform([0.22, 0.0, table_top_z - table_thick/2.0], [0, 0, 0]))
 
-        # Workspace grid pattern
-        border = trimesh.creation.box(extents=[0.52, 0.52, 0.002])
-        mat_border = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.24, 0.26, 0.32, 1.0], roughnessFactor=0.9)
-        scene.add(pyrender.Mesh.from_trimesh(trimesh.Trimesh(border.vertices, border.faces), material=mat_border, smooth=False), pose=self.make_transform([0.20, 0.0, table_top_z + 0.001], [0, 0, 0]))
+        # Project Live Calibrated Camera POV directly onto the workspace table surface
+        if table_texture is not None:
+            try:
+                # Downsample table_texture to 48x48 vertex color grid (smooth, ultra-fast, 100% native OpenGL compatible)
+                grid_size = 48
+                tex_rgb = cv2.cvtColor(table_texture, cv2.COLOR_BGR2RGB) if len(table_texture.shape) == 3 else table_texture
+                sampled = cv2.resize(tex_rgb, (grid_size, grid_size), interpolation=cv2.INTER_AREA)
+
+                half_s = workspace_size_m / 2.0
+                # Coordinate alignment: Top of camera image (near robot base) is at +X in local table frame; Bottom is -X
+                xs = np.linspace(-half_s, half_s, grid_size)
+                ys = np.linspace(-half_s, half_s, grid_size)
+                xx, yy = np.meshgrid(xs, ys, indexing='xy')
+
+                verts = np.column_stack([xx.flatten(), yy.flatten(), np.zeros(grid_size * grid_size, dtype=np.float32)])
+
+                colors = np.zeros((grid_size * grid_size, 4), dtype=np.uint8)
+                colors[:, :3] = sampled.reshape(-1, 3)
+                colors[:, 3] = 255
+
+                faces = []
+                for i in range(grid_size - 1):
+                    for j in range(grid_size - 1):
+                        idx = i * grid_size + j
+                        faces.append([idx, idx + 1, idx + grid_size])
+                        faces.append([idx + 1, idx + grid_size + 1, idx + grid_size])
+                faces = np.array(faces, dtype=np.int32)
+
+                proj_mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_colors=colors)
+                p_proj_node = pyrender.Mesh.from_trimesh(proj_mesh, smooth=True)
+                scene.add(p_proj_node, pose=self.make_transform([0.22, 0.0, table_top_z + 0.001], [0, 0, 0]))
+            except Exception as e:
+                border = trimesh.creation.box(extents=[0.52, 0.52, 0.002])
+                mat_border = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.24, 0.26, 0.32, 1.0], roughnessFactor=0.9)
+                scene.add(pyrender.Mesh.from_trimesh(trimesh.Trimesh(border.vertices, border.faces), material=mat_border, smooth=False), pose=self.make_transform([0.22, 0.0, table_top_z + 0.001], [0, 0, 0]))
+        else:
+            border = trimesh.creation.box(extents=[0.52, 0.52, 0.002])
+            mat_border = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.24, 0.26, 0.32, 1.0], roughnessFactor=0.9)
+            scene.add(pyrender.Mesh.from_trimesh(trimesh.Trimesh(border.vertices, border.faces), material=mat_border, smooth=False), pose=self.make_transform([0.22, 0.0, table_top_z + 0.001], [0, 0, 0]))
 
         # 2. Dobot Links
         p_meshes = self._create_pyrender_meshes()

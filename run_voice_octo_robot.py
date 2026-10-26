@@ -484,8 +484,14 @@ def main():
                     j1_rad, j2_rad, j3_rad, j4_rad, gripper_closed=False
                 )
 
-                # Render with physical 8cm sucker attached
-                scene = sim_renderer.build_scene(t_m, end_effector="suction")
+                # Render with physical 8cm sucker attached AND project the calibrated camera POV onto the table!
+                proj_tex = calibrated_crop if calibrator.is_calibrated else None
+                scene = sim_renderer.build_scene(
+                    t_m,
+                    end_effector="suction",
+                    table_texture=proj_tex,
+                    workspace_size_m=args.workspace_mm / 1000.0
+                )
                 _, _, last_sim_frame = sim_renderer.render_views(scene, t_m['ee_pos'])
             except Exception:
                 pass
