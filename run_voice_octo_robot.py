@@ -321,7 +321,8 @@ def main():
 
                 clamp_msg = f" [OUT-OF-BOUNDS -> PROJECTED TO WORKSPACE]" if was_clamped else ""
                 print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> Target (X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f}){clamp_msg} | Sucker: {grip_val:.2f}")
-                dobot.move_to_xyz(target_x, target_y, target_z, wait=True)
+                # Move and actively verify physical following
+                reached = dobot.move_to_xyz(target_x, target_y, target_z, wait=True, tolerance_mm=4.0)
 
                 # Sucker control
                 if grip_val > 0.5:
@@ -332,6 +333,8 @@ def main():
                     suction_state = False
 
                 cur_pose = dobot.get_pose()
+                actual_err = ((cur_pose['x']-target_x)**2 + (cur_pose['y']-target_y)**2 + (cur_pose['z']-target_z)**2)**0.5
+                print(f"        -> Physical Feedback: X={cur_pose['x']:.1f}, Y={cur_pose['y']:.1f}, Z={cur_pose['z']:.1f}mm | Tracking: {'REACHED' if reached else f'Lags by {actual_err:.1f}mm'}")
 
         # Explicitly stop suction after task rollout finishes
         dobot.set_suction(False)

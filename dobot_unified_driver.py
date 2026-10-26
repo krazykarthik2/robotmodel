@@ -131,6 +131,12 @@ class DobotUnifiedDriver:
 
     def _init_pydobot_queue_and_alarms(self, dev):
         """Clears queue, starts queue execution, and clears hardware alarms (msg id 20, 240, 245)."""
+        # Set proper PTP speed & acceleration so the motors physically move smoothly
+        try:
+            dev.speed(velocity=100.0, acceleration=100.0)
+        except Exception:
+            pass
+
         # Clear Queue (245)
         msg_clear = Message()
         msg_clear.id = 245
@@ -180,28 +186,43 @@ class DobotUnifiedDriver:
         else:
             return {"x": 200.0, "y": 0.0, "z": 100.0, "r": 0.0, "j1": 0.0, "j2": 0.0, "j3": 0.0, "j4": 0.0}
 
-    def move_to_xyz(self, x_mm, y_mm, z_mm, r_deg=0.0, wait=False):
-        """Moves robot to target Cartesian position in mm."""
+    def move_to_xyz(self, x_mm, y_mm, z_mm, r_deg=0.0, wait=True, tolerance_mm=4.0, timeout_sec=4.0):
+        """
+        Moves robot to target Cartesian position in mm, actively verifying
+        that the physical arm tracks and reaches the destination.
+        If the arm is lagging or stationary, re-pulses the command until reached.
+        """
         if self.mode == "pydobot" and self.device:
             self.device.move_to(x_mm, y_mm, z_mm, r_deg, wait=False)
             if wait:
-                # Poll pose until within tolerance or max timeout to prevent infinite queue hang
                 t0 = time.time()
-                while time.time() - t0 < 5.0:
+                last_reissue = t0
+                while time.time() - t0 < timeout_sec:
                     try:
                         p = self.device.pose()
-                        err = ((p[0]-x_mm)**2 + (p[1]-y_mm)**2 + (p[2]-z_mm)**2)**0.5
-                        if err < 5.0:
-                            break
+                        err = ((p[0] - x_mm)**2 + (p[1] - y_mm)**2 + (p[2] - z_mm)**2)**0.5
+                        if err <= tolerance_mm:
+                            return True
+                        # If robot hasn't reached within 1.0 second, re-pulse command to ensure queue execution
+                        if time.time() - last_reissue > 1.0:
+                            self.device.move_to(x_mm, y_mm, z_mm, r_deg, wait=False)
+                            last_reissue = time.time()
                     except Exception:
                         pass
-                    time.sleep(0.05)
+                    time.sleep(0.04)
+                # Read final pose
+                final_p = self.device.pose()
+                final_err = ((final_p[0] - x_mm)**2 + (final_p[1] - y_mm)**2 + (final_p[2] - z_mm)**2)**0.5
+                return final_err <= tolerance_mm
+            return True
         elif self.mode == "dll" and self.api:
             cmd_idx = dType.SetPTPCmd(self.api, dType.PTPMode.PTPMOVLXYZMode, x_mm, y_mm, z_mm, r_deg, isQueued=1)[0]
             if wait:
                 self._wait_dll_cmd(cmd_idx)
+            return True
         else:
             print(f"[DRY-RUN MOVE] X={x_mm:.1f}mm, Y={y_mm:.1f}mm, Z={z_mm:.1f}mm, R={r_deg:.1f}deg")
+            return True
 
     def set_suction(self, enable=False):
         """Explicitly enables or disables suction pump."""
