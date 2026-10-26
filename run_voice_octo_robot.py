@@ -33,6 +33,51 @@ def cv2_to_pygame_surface(cv_img):
     h, w = rgb.shape[:2]
     return pygame.image.frombuffer(rgb.tobytes(), (w, h), "RGB")
 
+def enforce_dobot_workspace_limits(x, y, z):
+    """
+    Kinematic & Physical Boundary Projector for Dobot Magician:
+    1. Base Reach (Cylindrical Envelope):
+       - Min Reach R_min = 160.0 mm (prevents collision with Dobot base column)
+       - Max Reach R_max = 315.0 mm (prevents link singularities and motor stall at 342mm limit)
+    2. Orientation (Hemisphere):
+       - Yaw angle |j1| <= 75.0 degrees (keeps target strictly in front work area)
+       - X >= 60.0 mm (prevents commanding arm behind the robot)
+    3. Vertical Height with 8cm Suction Cup:
+       - Min Z = -35.0 mm (table surface contact level with objects; prevents crashing table)
+       - Max Z = 145.0 mm (safe observation ceiling)
+    """
+    clamped_x = float(x)
+    clamped_y = float(y)
+    clamped_z = float(np.clip(z, -35.0, 145.0))
+
+    if clamped_x < 60.0:
+        clamped_x = 60.0
+
+    # Reach boundary
+    r = np.sqrt(clamped_x**2 + clamped_y**2)
+    R_MIN = 160.0
+    R_MAX = 315.0
+
+    if r < R_MIN:
+        scale = R_MIN / max(r, 1e-4)
+        clamped_x *= scale
+        clamped_y *= scale
+    elif r > R_MAX:
+        scale = R_MAX / max(r, 1e-4)
+        clamped_x *= scale
+        clamped_y *= scale
+
+    # Azimuth yaw boundary
+    yaw_deg = np.degrees(np.arctan2(clamped_y, clamped_x))
+    if abs(yaw_deg) > 75.0:
+        target_yaw_rad = np.radians(np.sign(yaw_deg) * 75.0)
+        curr_r = np.sqrt(clamped_x**2 + clamped_y**2)
+        clamped_x = curr_r * np.cos(target_yaw_rad)
+        clamped_y = curr_r * np.sin(target_yaw_rad)
+
+    clamped = (abs(clamped_x - x) > 0.5 or abs(clamped_y - y) > 0.5 or abs(clamped_z - z) > 0.5)
+    return float(clamped_x), float(clamped_y), float(clamped_z), clamped
+
 def fit_to_640x480(frame):
     """
     Guarantees the raw camera feed fits inside a 640x480 frame:
@@ -267,13 +312,15 @@ def main():
                 dz_mm = act[2] * 1000.0 * args.step_gain
                 grip_val = act[6]
 
-                target_x = float(np.clip(cur_pose['x'] + dx_mm, 150.0, 310.0))
-                target_y = float(np.clip(cur_pose['y'] + dy_mm, -160.0, 160.0))
-                # Sucker tip clearance: suction cup is 80mm long.
-                # Safe minimum EE Z is -20mm (tip touches surface at table contact)
-                target_z = float(np.clip(cur_pose['z'] + dz_mm, -25.0, 150.0))
+                raw_tx = cur_pose['x'] + dx_mm
+                raw_ty = cur_pose['y'] + dy_mm
+                raw_tz = cur_pose['z'] + dz_mm
 
-                print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f} | Sucker: {grip_val:.2f}")
+                # Enforce physical and kinematic workspace limits
+                target_x, target_y, target_z, was_clamped = enforce_dobot_workspace_limits(raw_tx, raw_ty, raw_tz)
+
+                clamp_msg = f" [OUT-OF-BOUNDS -> PROJECTED TO WORKSPACE]" if was_clamped else ""
+                print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> Target (X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f}){clamp_msg} | Sucker: {grip_val:.2f}")
                 dobot.move_to_xyz(target_x, target_y, target_z, wait=True)
 
                 # Sucker control
