@@ -143,6 +143,9 @@ def main():
     parser.add_argument("--port", "--com", default=None, help="Dobot COM port (e.g. COM13). If omitted, auto-detects by hardware description.")
     parser.add_argument("--camera_id", default="0", help="Initial camera index (0, 1) or MJPEG stream URL (e.g. http://192.168.1.X:8080/video)")
     parser.add_argument("--secondary_cam", default="1", help="Second camera index or MJPEG IP address and path (e.g. http://192.168.1.X:8080/video)")
+    parser.add_argument("--invert_y", action="store_true", default=False, help="Invert Y motion axis sign")
+    parser.add_argument("--invert_z", action="store_true", default=False, help="Invert Z vertical height motion axis sign")
+    parser.add_argument("--swap_xy", action="store_true", default=False, help="Swap X and Y axes if camera view is rotated 90 degrees")
     parser.add_argument("--auto_home", action="store_true", help="Perform real hardware HOME calibration on startup to automatically calibrate simulation")
     parser.add_argument("--workspace_mm", type=float, default=360.0, help="Workspace table span in mm (default: 360mm)")
     parser.add_argument("--num_chunks", type=int, default=10, help="Number of continuous Octo policy rollout cycles to execute (default: 10)")
@@ -324,10 +327,17 @@ def main():
                 
                 # Octo actions are normalized deltas in meters.
                 # Scaling gain translates them into physical millimetres on Dobot's workspace
-                dx_mm = act[0] * 1000.0 * args.step_gain
-                dy_mm = act[1] * 1000.0 * args.step_gain
-                dz_mm = act[2] * 1000.0 * args.step_gain
+                dx_raw = act[0] * 1000.0 * args.step_gain
+                dy_raw = act[1] * 1000.0 * args.step_gain
+                dz_raw = act[2] * 1000.0 * args.step_gain
                 grip_val = act[6]
+
+                if args.swap_xy:
+                    dx_raw, dy_raw = dy_raw, dx_raw
+                
+                dx_mm = dx_raw
+                dy_mm = -dy_raw if args.invert_y else dy_raw
+                dz_mm = -dz_raw if args.invert_z else dz_raw
 
                 raw_tx = cur_pose['x'] + dx_mm
                 raw_ty = cur_pose['y'] + dy_mm
@@ -395,7 +405,18 @@ def main():
                     calibrator.is_calibrated = False
                     status_text = "CALIBRATION RESET - SHOW 4 MARKERS TO LOCK"
                     print("\n[INFO] Calibration reset! Looking for 4 markers to lock perspective once...")
-                elif event.key == pygame.K_h:
+                elif event.key == pygame.K_y:
+                    args.invert_y = not args.invert_y
+                    status_text = f"INVERT Y TOGGLED: {'INVERTED' if args.invert_y else 'NORMAL'}"
+                    print(f"\n[INFO] Invert Y motion toggled: {args.invert_y}")
+                elif event.key == pygame.K_z:
+                    args.invert_z = not args.invert_z
+                    status_text = f"INVERT Z TOGGLED: {'INVERTED' if args.invert_z else 'NORMAL'}"
+                    print(f"\n[INFO] Invert Z motion toggled: {args.invert_z}")
+                elif event.key == pygame.K_x:
+                    args.swap_xy = not args.swap_xy
+                    status_text = f"SWAP XY TOGGLED: {'SWAPPED (90°)' if args.swap_xy else 'NORMAL'}"
+                    print(f"\n[INFO] Swap XY motion axes toggled: {args.swap_xy}")
                     # Press 'h' anytime to run hardware HOME calibration and auto-align simulation
                     threading.Thread(target=calibrate_sim_to_real_hardware, daemon=True).start()
                 elif event.key == pygame.K_b:
@@ -509,7 +530,7 @@ def main():
         screen.blit(lbl_inst, (25, 528))
 
         # Hotkeys help bar
-        help_str = "[v/m] Speak | [t] Text | [SPACE] Run Octo | [h] Auto-Home Calibrate | [b] Base Rot | [q] Quit"
+        help_str = "[SPACE] Run | [v/m] Voice | [h] Home | [y] Invert Y | [z] Invert Z | [x] Swap XY | [q] Quit"
         screen.blit(font.render(help_str, True, (160, 175, 200)), (675, 440))
         screen.blit(font.render(f"STATUS: {status_text}", True, (255, 255, 255)), (15, 502))
 
