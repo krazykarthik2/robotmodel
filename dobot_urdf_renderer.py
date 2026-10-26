@@ -226,6 +226,21 @@ class DobotURDFRenderer:
             p_cube = pyrender.Mesh.from_trimesh(trimesh.Trimesh(cube_mesh.vertices, cube_mesh.faces), material=mat_cube, smooth=False)
             scene.add(p_cube, pose=self.make_transform(cube_pos, [0, 0, 0]))
 
+        # 5. Distractors
+        if distractor_cubes:
+            for d_rgb, d_pos in distractor_cubes:
+                dc_m = trimesh.creation.box(extents=[0.022, 0.022, 0.022])
+                mat_dc = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*d_rgb, 1.0], roughnessFactor=0.3)
+                p_dc = pyrender.Mesh.from_trimesh(trimesh.Trimesh(dc_m.vertices, dc_m.faces), material=mat_dc, smooth=False)
+                scene.add(p_dc, pose=self.make_transform(d_pos, [0, 0, 0]))
+
+        if distractor_plats:
+            for dp_rgb, dp_pos in distractor_plats:
+                dp_m = trimesh.creation.cylinder(radius=0.035, height=0.006)
+                mat_dp = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*dp_rgb, 1.0], roughnessFactor=0.4)
+                p_dp = pyrender.Mesh.from_trimesh(trimesh.Trimesh(dp_m.vertices, dp_m.faces), material=mat_dp, smooth=True)
+                scene.add(p_dp, pose=self.make_transform(dp_pos, [0, 0, 0]))
+
         return scene
 
     def render_views(self, scene, ee_pos):
