@@ -38,50 +38,52 @@ class ArucoAutoCalibrator:
         self.ws_w_mm = 360.0
         self.ws_h_mm = 360.0
 
-        # Canonical Physical-to-Image Coordinate Frame:
-        # In Bridge V2 dataset (Octo's trained coordinate frame):
-        # - Image Horizontal (columns 0 to W-1): Robot Left (+Y) to Robot Right (-Y)
-        # - Image Vertical (rows 0 to H-1): Far Forward (+X) down to Near Base (-X)
+        # Camera View Geometry (Looking from front of table towards Dobot):
+        # - Camera Top (v=0): Near Dobot base (X = 80 mm)
+        # - Camera Bottom (v=h-1): Far table edge (X = 360 mm)
+        # - Camera Screen Left (u=0): Robot RIGHT (Y = -140 mm) [Viewer Left = Robot Right]
+        # - Camera Screen Right (u=w-1): Robot LEFT (Y = +140 mm) [Viewer Right = Robot Left]
         #
-        # Physical workspace bounds centered in front of Dobot:
-        # X: [0.040 m, 0.400 m] (span = 0.360 m) -> Dobot base front is at X = 0.080 m
-        # Y: [-0.180 m, +0.180 m] (span = 0.360 m) -> Center is Y = 0.000 m
+        # Workspace Span:
+        # X: [80 mm, 360 mm]  (Span = 280 mm)
+        # Y: [-140 mm, +140 mm] (Span = 280 mm)
         #
         # 4 Markers (80mm x 80mm) placed touching each other right in front of the Dobot base:
-        # - Row 1 (touching base): X = 80mm + 40mm = 120 mm
-        # - Row 2 (forward in scene): X = 120mm + 80mm = 200 mm
-        # - Left column: Y = +40 mm
-        # - Right column: Y = -40 mm
+        # - Row 1 (touching base): X = 80 + 40 = 120 mm
+        # - Row 2 (further out):   X = 120 + 80 = 200 mm
         #
-        # Marker IDs placed as:
-        # ID 0 (near base, Left)    | ID 1 (near base, Right)
-        # --------------------------+--------------------------
-        # ID 3 (forward, Left)      | ID 2 (forward, Right)
-
+        # Physical to Pixel Conversion:
+        # u = ((Y_phys - (-140.0)) / 280.0) * (w - 1)
+        # v = ((X_phys - 80.0) / 280.0) * (h - 1)
         w, h = output_size
-        ws_span_x = 360.0 # mm
-        ws_span_y = 360.0 # mm
-        x_max_mm = 400.0  # mm (far edge of table view)
-        y_max_mm = 180.0  # mm (left edge of table view)
+        ws_span_x = 280.0 # mm
+        ws_span_y = 280.0 # mm
+        x_min_mm = 80.0   # mm
+        y_min_mm = -140.0 # mm
 
         def to_pixel(x_phys, y_phys):
-            u = (y_max_mm - y_phys) / ws_span_y * (w - 1)
-            v = (x_max_mm - x_phys) / ws_span_x * (h - 1)
-            return [u, v]
+            u = ((y_phys - y_min_mm) / ws_span_y) * (w - 1.0)
+            v = ((x_phys - x_min_mm) / ws_span_x) * (h - 1.0)
+            return [float(u), float(v)]
 
+        # Marker layout:
+        # ID 0 (Screen Left, near base -> Robot Right: Y=-40, X=120)
+        # ID 1 (Screen Right, near base -> Robot Left: Y=+40, X=120)
+        # ID 2 (Screen Right, further out -> Robot Left: Y=+40, X=200)
+        # ID 3 (Screen Left, further out -> Robot Right: Y=-40, X=200)
         self.dst_center_pts = np.array([
-            to_pixel(120.0, +40.0), # ID 0: Touching base, Robot Left
-            to_pixel(120.0, -40.0), # ID 1: Touching base, Robot Right
-            to_pixel(200.0, -40.0), # ID 2: Forward, Robot Right
-            to_pixel(200.0, +40.0)  # ID 3: Forward, Robot Left
+            to_pixel(120.0, -40.0), # ID 0
+            to_pixel(120.0, +40.0), # ID 1
+            to_pixel(200.0, +40.0), # ID 2
+            to_pixel(200.0, -40.0)  # ID 3
         ], dtype=np.float32)
 
         # Full table workspace outer corners (u, v)
         self.dst_outer_corners = np.array([
-            [0, 0],         # Top-Left (Far-Left)
-            [w - 1, 0],     # Top-Right (Far-Right)
-            [w - 1, h - 1], # Bottom-Right (Near-Right)
-            [0, h - 1]      # Bottom-Left (Near-Left)
+            [0, 0],         # Top-Left (Near base, Robot Right)
+            [w - 1, 0],     # Top-Right (Near base, Robot Left)
+            [w - 1, h - 1], # Bottom-Right (Far table, Robot Left)
+            [0, h - 1]      # Bottom-Left (Far table, Robot Right)
         ], dtype=np.float32)
 
         self.homography_matrix = None

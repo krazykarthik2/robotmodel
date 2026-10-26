@@ -140,17 +140,19 @@ class DobotURDFRenderer:
         if table_texture is not None:
             try:
                 # Downsample table_texture to 48x48 vertex color grid (smooth, ultra-fast, 100% native OpenGL compatible)
-                # No arbitrary cv2.rotate() hack: 1:1 direct geometric alignment with Dobot physical axes!
                 grid_size = 48
                 tex_rgb = cv2.cvtColor(table_texture, cv2.COLOR_BGR2RGB) if len(table_texture.shape) == 3 else table_texture
                 sampled = cv2.resize(tex_rgb, (grid_size, grid_size), interpolation=cv2.INTER_AREA)
 
-                half_s = workspace_size_m / 2.0
-                # Table coordinate alignment matching the canonical physical perspective:
-                # Image rows (v: 0 -> H) map along physical +X from Far (+half_s) to Near (-half_s)
-                # Image cols (u: 0 -> W) map along physical +Y from Left (+half_s) to Right (-half_s)
-                xs = np.linspace(half_s, -half_s, grid_size)
-                ys = np.linspace(half_s, -half_s, grid_size)
+                # Physical table mapping matching camera perspective:
+                # - Screen Left (u=0) is Robot Right (-Y)
+                # - Screen Right (u=w-1) is Robot Left (+Y)
+                # - Screen Top (v=0) is near Dobot base (+X=80mm)
+                # - Screen Bottom (v=h-1) is far table edge (+X=360mm)
+                # Local table mesh is centered at X = 0.220 m (220 mm), span = 0.280 m (-0.140 to +0.140 m)
+                half_s = 0.140 # 140 mm
+                xs = np.linspace(-half_s, half_s, grid_size) # from base (-half_s -> X=80mm) to forward (+half_s -> X=360mm)
+                ys = np.linspace(-half_s, half_s, grid_size) # from right (-half_s -> Y=-140mm) to left (+half_s -> Y=+140mm)
                 xx, yy = np.meshgrid(xs, ys, indexing='ij')
 
                 verts = np.column_stack([xx.flatten(), yy.flatten(), np.zeros(grid_size * grid_size, dtype=np.float32)])

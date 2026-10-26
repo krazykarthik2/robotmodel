@@ -58,10 +58,19 @@ def detect_colored_objects(crop_img, min_area=80):
             if M["m00"] > 0:
                 u = float(M["m10"] / M["m00"])
                 v = float(M["m01"] / M["m00"])
-                # Inverse homography pixel to physical mm:
-                # Table spans: X: [40mm, 400mm], Y: [-180mm, +180mm]
-                y_mm = 180.0 - (u / (w - 1.0)) * 360.0
-                x_mm = 400.0 - (v / (h - 1.0)) * 360.0
+                # Inverse homography pixel (u, v) to physical Dobot (X, Y) mm:
+                # - Screen Left (u=0) is Robot Right (Y = -140 mm)
+                # - Screen Right (u=w-1) is Robot Left (Y = +140 mm)
+                # - Screen Top (v=0) is near Dobot base (X = 80 mm)
+                # - Screen Bottom (v=h-1) is far table edge (X = 360 mm)
+                ws_span_x = 280.0
+                ws_span_y = 280.0
+                x_min_mm = 80.0
+                y_min_mm = -140.0
+
+                y_mm = y_min_mm + (u / (w - 1.0)) * ws_span_y
+                x_mm = x_min_mm + (v / (h - 1.0)) * ws_span_x
+
                 detected[color_name] = {
                     "pixel": (int(u), int(v)),
                     "area": int(area),
