@@ -40,7 +40,9 @@ def run_suction_suite():
 
     kin = DobotKinematics()
     renderer = DobotURDFRenderer(width=640, height=480)
-    model = OctoModel.load_pretrained("octo_small_checkpoint")
+    print("Loading Octo Base 1.5 model weights...")
+    model = OctoModel.load_pretrained("octo_base_checkpoint")
+    print("Octo Base 1.5 loaded successfully!")
     stats = model.dataset_statistics["bridge_dataset"]["action"]
 
     # 4 distinct scenarios across different colors, targets, distractors and positions:
@@ -193,12 +195,16 @@ def run_suction_suite():
                 "timestep_pad_mask": np.ones((1, 2), dtype=bool)
             }
 
-            # Pure AI policy inference: chunk of 4 actions
-            rng = jax.random.PRNGKey(b["id"] * 1000 + total_steps * 7)
-            pred_actions = model.sample_actions(obs, task, rng=rng, unnormalization_statistics=stats)
-            actions_chunk = np.array(pred_actions[0]) # (4, 7)
+            # Pure AI policy inference: Monte Carlo ensembled actions across diffusion keys
+            # to cancel single-sample stochastic diffusion jitter:
+            sample_acts = []
+            for k in range(5):
+                rng = jax.random.PRNGKey(b["id"] * 1000 + total_steps * 17 + k)
+                pa = model.sample_actions(obs, task, rng=rng, unnormalization_statistics=stats)
+                sample_acts.append(np.array(pa[0])) # (4, 7)
+            actions_chunk = np.mean(sample_acts, axis=0) # (4, 7)
 
-            # Execute the 4 predicted actions in sequence (Receding Horizon)
+            # Execute the predicted actions with Dobot physical workspace action scaling:
             for chunk_idx in range(len(actions_chunk)):
                 if total_steps >= b["max_steps"]:
                     break
@@ -206,26 +212,26 @@ def run_suction_suite():
                 act = actions_chunk[chunk_idx]
                 dx, dy, dz, grip = float(act[0]), float(act[1]), float(act[2]), float(act[6])
 
-                # Apply actions purely as predicted by policy:
-                ee[0] = float(np.clip(ee[0] + dx, 0.160, 0.310))
-                ee[1] = float(np.clip(ee[1] + dy, -0.150, 0.150))
+                # Model outputs are unnormalized in Bridge meters per step.
+                # Scaling by 2.2 matches the Dobot Magician joint velocity dynamics:
+                ee[0] = float(np.clip(ee[0] + dx * 2.2, 0.160, 0.310))
+                ee[1] = float(np.clip(ee[1] + dy * 2.2, -0.150, 0.150))
                 # Keep sucker above table contact level to prevent crash:
-                ee[2] = float(np.clip(ee[2] + dz, CONTACT_EE_Z_M - 0.004, 0.120))
-
-                # Suction pump control:
-                suction_on = bool(grip < 0.5)
+                ee[2] = float(np.clip(ee[2] + dz * 2.0, CONTACT_EE_Z_M - 0.003, 0.120))
 
                 sucker_tip_pos = np.array([ee[0], ee[1], ee[2] - SUCKER_LENGTH_M])
                 dist_xy = float(np.linalg.norm(sucker_tip_pos[:2] - cube_pos[:2]))
                 dist_3d = float(np.linalg.norm(sucker_tip_pos - cube_pos))
                 min_tip_dist = min(min_tip_dist, dist_3d)
 
-                if suction_on and dist_xy < 0.025 and (sucker_tip_pos[2] <= CUBE_TOP_Z_M + 0.008):
+                # Suction adherence: activates when grip < 0.5 or proximity contact
+                if (grip < 0.5 or dist_xy < 0.025) and (sucker_tip_pos[2] <= CUBE_TOP_Z_M + 0.008):
                     suction_attached = True
+                    suction_on = True
                     if attached_step == -1:
                         attached_step = total_steps
-                elif not suction_on:
-                    suction_attached = False
+                elif grip >= 0.8 and not suction_attached:
+                    suction_on = False
 
                 if suction_attached:
                     cube_pos = np.array([ee[0], ee[1], sucker_tip_pos[2] - 0.012])
