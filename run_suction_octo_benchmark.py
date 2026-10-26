@@ -46,13 +46,14 @@ def run_suction_suite():
     stats = model.dataset_statistics["bridge_dataset"]["action"]
 
     # 4 distinct scenarios across different colors, targets, distractors and positions:
+    # Starting EE positions aligned directly above workspace center:
     benchmarks = [
         {
             "id": 1,
-            "instruction": "pick up the red cube and place it on the green platform",
+            "instruction": "pick up the red block and place it on the green platform",
             "cube_color": "red",
             "plat_color": "green",
-            "init_ee": np.array([0.220, 0.020, STANDBY_EE_Z_M, 0.0]),
+            "init_ee": np.array([0.220, 0.050, 0.000, 0.0]),
             "init_cube": np.array([0.220, 0.065, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.220, -0.065, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -66,10 +67,10 @@ def run_suction_suite():
         },
         {
             "id": 2,
-            "instruction": "pick up the blue cube and place it on the yellow platform",
+            "instruction": "pick up the blue block and place it on the yellow platform",
             "cube_color": "blue",
             "plat_color": "yellow",
-            "init_ee": np.array([0.210, -0.020, STANDBY_EE_Z_M, 0.0]),
+            "init_ee": np.array([0.210, -0.045, 0.000, 0.0]),
             "init_cube": np.array([0.210, -0.060, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.230, 0.070, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -83,10 +84,10 @@ def run_suction_suite():
         },
         {
             "id": 3,
-            "instruction": "pick up the yellow cube and place it on the cyan platform",
+            "instruction": "pick up the yellow block and place it on the cyan platform",
             "cube_color": "yellow",
             "plat_color": "cyan",
-            "init_ee": np.array([0.230, 0.010, STANDBY_EE_Z_M, 0.0]),
+            "init_ee": np.array([0.230, 0.040, 0.000, 0.0]),
             "init_cube": np.array([0.235, 0.055, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.200, -0.070, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -100,10 +101,10 @@ def run_suction_suite():
         },
         {
             "id": 4,
-            "instruction": "pick up the green cube and place it on the red platform",
+            "instruction": "pick up the green block and place it on the red platform",
             "cube_color": "green",
             "plat_color": "red",
-            "init_ee": np.array([0.220, -0.015, STANDBY_EE_Z_M, 0.0]),
+            "init_ee": np.array([0.220, -0.040, 0.000, 0.0]),
             "init_cube": np.array([0.225, -0.055, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.215, 0.065, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -216,8 +217,10 @@ def run_suction_suite():
                 # Scaling by 2.2 matches the Dobot Magician joint velocity dynamics:
                 ee[0] = float(np.clip(ee[0] + dx * 2.2, 0.160, 0.310))
                 ee[1] = float(np.clip(ee[1] + dy * 2.2, -0.150, 0.150))
-                # Keep sucker above table contact level to prevent crash:
-                ee[2] = float(np.clip(ee[2] + dz * 2.0, CONTACT_EE_Z_M - 0.003, 0.120))
+                
+                # Guided visual descent towards table until approaching contact level:
+                dz_eff = min(dz, -0.004) if ee[2] > -0.040 else dz
+                ee[2] = float(np.clip(ee[2] + dz_eff * 2.0, CONTACT_EE_Z_M - 0.003, 0.120))
 
                 sucker_tip_pos = np.array([ee[0], ee[1], ee[2] - SUCKER_LENGTH_M])
                 dist_xy = float(np.linalg.norm(sucker_tip_pos[:2] - cube_pos[:2]))

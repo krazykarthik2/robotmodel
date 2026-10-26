@@ -251,10 +251,11 @@ class DobotURDFRenderer:
         - Third-person camera: 640x480
         """
         # --- 1. Third Person View (640x480) ---
-        # Elevated front-quarter perspective framing the entire Dobot (upright or moving) AND the full workspace table
+        # Canonical Bridge-style shoulder/quarter viewpoint: looking from base shoulder forward into workspace
+        # Eye positioned at [-0.05, -0.18, 0.32], looking at [0.22, 0.02, -0.05]
         cam_tp = pyrender.PerspectiveCamera(yfov=np.radians(52.0))
-        eye_tp = np.array([0.62, 0.25, 0.36])
-        tgt_tp = np.array([0.18, 0.0, -0.02])
+        eye_tp = np.array([-0.05, -0.18, 0.32])
+        tgt_tp = np.array([0.22, 0.02, -0.05])
         up_tp = np.array([0, 0, 1])
         fwd_tp = (tgt_tp - eye_tp) / np.linalg.norm(tgt_tp - eye_tp)
         rgt_tp = np.cross(fwd_tp, up_tp) / np.linalg.norm(np.cross(fwd_tp, up_tp))
