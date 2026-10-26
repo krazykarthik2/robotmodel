@@ -97,6 +97,8 @@ def main():
     parser.add_argument("--camera_id", default="0", help="Initial camera index (0, 1) or MJPEG stream URL (e.g. http://192.168.1.X:8080/video)")
     parser.add_argument("--secondary_cam", default="1", help="Second camera index or MJPEG IP address and path (e.g. http://192.168.1.X:8080/video)")
     parser.add_argument("--workspace_mm", type=float, default=360.0, help="Workspace table span in mm (default: 360mm)")
+    parser.add_argument("--num_chunks", type=int, default=10, help="Number of continuous Octo policy rollout cycles to execute (default: 10)")
+    parser.add_argument("--step_gain", type=float, default=15.0, help="Scaling gain from Octo delta to physical mm (default: 15.0)")
     parser.add_argument("--no_mjpeg", action="store_true", help="Disable MJPEG fourcc request")
     args = parser.parse_args()
 
@@ -202,61 +204,75 @@ def main():
         if last_crop is None:
             return
         is_executing = True
-        status_text = f"OCTO EVALUATING: \"{current_instruction}\"..."
-        print(f"\n[EXECUTION STARTED] Task: \"{current_instruction}\"")
+        total_chunks = args.num_chunks
+        print(f"\n{'=' * 60}")
+        print(f"[OCTO ROLLOUT STARTED] Task: \"{current_instruction}\"")
+        print(f"[INFO] Executing closed-loop policy loop for {total_chunks} chunks ({total_chunks * 4} steps total)...")
+        print(f"{'=' * 60}\n")
 
-        # Encode prompt
+        # Encode prompt once
         octo_task = model.create_tasks(texts=[current_instruction])
 
-        # Prepare 256x256 overhead and 128x128 wrist
-        img_p = last_crop
-        img_w = cv2.resize(last_crop, (128, 128))
+        for chunk_idx in range(1, total_chunks + 1):
+            if not is_executing or not running:
+                break
 
-        octo_obs = {
-            "image_primary": np.stack([img_p, img_p], axis=0)[None],
-            "image_wrist": np.stack([img_w, img_w], axis=0)[None],
-            "pad_mask_dict": {
-                "image_primary": np.ones((1, 2), dtype=bool),
-                "image_wrist": np.ones((1, 2), dtype=bool),
-                "timestep": np.ones((1, 2), dtype=bool)
-            },
-            "timestep": np.array([[0, 1]], dtype=np.int32),
-            "timestep_pad_mask": np.ones((1, 2), dtype=bool)
-        }
+            status_text = f"OCTO INFERENCE (CHUNK {chunk_idx}/{total_chunks})..."
+            cur_pose = dobot.get_pose()
 
-        rng_key = jax.random.PRNGKey(int(time.time()))
-        pred_actions = model.sample_actions(octo_obs, octo_task, rng=rng_key, unnormalization_statistics=unnorm_stats)
-        actions = np.array(pred_actions[0]) # (4, 7)
-        print(f"[OCTO PREDICTION] Action chunk (4 steps):\n{actions}")
+            # Fresh observation from live camera feed
+            img_p = last_crop.copy()
+            img_w = cv2.resize(img_p, (128, 128))
 
-        cur_pose = dobot.get_pose()
-        print(f"[ROBOT POSE] X={cur_pose['x']:.1f}mm, Y={cur_pose['y']:.1f}mm, Z={cur_pose['z']:.1f}mm")
+            octo_obs = {
+                "image_primary": np.stack([img_p, img_p], axis=0)[None],
+                "image_wrist": np.stack([img_w, img_w], axis=0)[None],
+                "pad_mask_dict": {
+                    "image_primary": np.ones((1, 2), dtype=bool),
+                    "image_wrist": np.ones((1, 2), dtype=bool),
+                    "timestep": np.ones((1, 2), dtype=bool)
+                },
+                "timestep": np.array([[0, 1]], dtype=np.int32),
+                "timestep_pad_mask": np.ones((1, 2), dtype=bool)
+            }
 
-        for s_idx, act in enumerate(actions, 1):
-            status_text = f"EXECUTING ROBOT STEP {s_idx}/4..."
-            dx_mm = act[0] * 1000.0 * 2.0
-            dy_mm = act[1] * 1000.0 * 2.0
-            dz_mm = act[2] * 1000.0 * 2.0
-            grip_val = act[6]
-
-            target_x = np.clip(cur_pose['x'] + dx_mm, 150.0, 300.0)
-            target_y = np.clip(cur_pose['y'] + dy_mm, -150.0, 150.0)
-            target_z = np.clip(cur_pose['z'] + dz_mm, 35.0, 160.0)
-
-            print(f"  Step {s_idx}: Move to X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f} | Gripper: {grip_val:.2f}")
-            dobot.move_to_xyz(target_x, target_y, target_z)
+            rng_key = jax.random.PRNGKey(int(time.time() * 1000) % 100000)
+            pred_actions = model.sample_actions(octo_obs, octo_task, rng=rng_key, unnormalization_statistics=unnorm_stats)
+            actions = np.array(pred_actions[0]) # (4, 7)
             
-            if grip_val > 0.5:
-                dobot.set_gripper("close")
-            else:
-                dobot.set_gripper("open")
+            print(f"\n--- Chunk [{chunk_idx}/{total_chunks}] --- Robot Pose: X={cur_pose['x']:.1f}, Y={cur_pose['y']:.1f}, Z={cur_pose['z']:.1f}")
 
-            cur_pose = {"x": target_x, "y": target_y, "z": target_z}
-            time.sleep(0.1)
+            for s_idx, act in enumerate(actions, 1):
+                if not running:
+                    break
+                status_text = f"EXECUTING STEP {s_idx}/4 (CHUNK {chunk_idx}/{total_chunks})..."
+                
+                # Octo actions are normalized deltas in meters.
+                # Scaling gain translates them into physical millimetres on Dobot's workspace
+                dx_mm = act[0] * 1000.0 * args.step_gain
+                dy_mm = act[1] * 1000.0 * args.step_gain
+                dz_mm = act[2] * 1000.0 * args.step_gain
+                grip_val = act[6]
 
-        status_text = "ACTION CHUNK FINISHED!"
+                target_x = float(np.clip(cur_pose['x'] + dx_mm, 150.0, 310.0))
+                target_y = float(np.clip(cur_pose['y'] + dy_mm, -160.0, 160.0))
+                # Tool tip clearance safety: prevent end effector from plunging into table
+                target_z = float(np.clip(cur_pose['z'] + dz_mm, 20.0, 160.0))
+
+                print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f} | Grip: {grip_val:.2f}")
+                dobot.move_to_xyz(target_x, target_y, target_z)
+
+                if grip_val > 0.5:
+                    dobot.set_gripper("close")
+                else:
+                    dobot.set_gripper("open")
+
+                cur_pose = {"x": target_x, "y": target_y, "z": target_z}
+                time.sleep(0.15)
+
+        status_text = "TASK ROLLOUT FINISHED!"
         is_executing = False
-        print("[SUCCESS] Task execution cycle completed.\n")
+        print(f"\n[SUCCESS] Completed {total_chunks} policy rollout cycles.\n")
 
     while running:
         for event in pygame.event.get():
