@@ -1,4 +1,11 @@
+import os
 import sys
+
+# Prevent network timeout checks for local huggingface cache
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import jax
 import jax.numpy as jnp
 import jax.tree_util
@@ -23,3 +30,4 @@ jnp.clip = _patched_clip
 
 import octo.utils.typing
 octo.utils.typing.PRNGKey = jax.Array
+

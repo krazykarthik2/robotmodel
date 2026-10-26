@@ -30,7 +30,7 @@ SUCKER_LENGTH_M = 0.080
 TABLE_Z_M = -0.1492
 CUBE_TOP_Z_M = TABLE_Z_M + 0.024 # -0.1252 m
 CONTACT_EE_Z_M = CUBE_TOP_Z_M + SUCKER_LENGTH_M # -0.0452 m
-STANDBY_EE_Z_M = 0.040 # Hover height above table
+STANDBY_EE_Z_M = 0.010 # Realistic workspace standby hover height (sucker tip is 70mm above table)
 
 def run_suction_suite():
     print("=" * 70)
@@ -139,8 +139,12 @@ def run_suction_suite():
         suction_attached = False
         min_tip_dist = 999.0
         attached_step = -1
+        total_steps = 0
 
-        for step in range(1, b["max_steps"] + 1):
+        # Official Octo Receding Horizon Control (RHC) Loop:
+        # Instead of 1 action step per query, each model query generates a 4-step action trajectory.
+        # We execute action chunks sequentially with temporal smoothing.
+        while total_steps < b["max_steps"]:
             # Suction Cup tip is 0.080m below EE origin:
             sucker_tip_pos = np.array([ee[0], ee[1], ee[2] - SUCKER_LENGTH_M])
             dist_xy = float(np.linalg.norm(sucker_tip_pos[:2] - cube_pos[:2]))
@@ -148,11 +152,10 @@ def run_suction_suite():
             min_tip_dist = min(min_tip_dist, dist_3d)
 
             # Physical suction adherence:
-            # Sucker cup seals when: suction pump is active, tip within 2.5cm XY, and touches cube top
             if suction_on and dist_xy < 0.025 and (sucker_tip_pos[2] <= CUBE_TOP_Z_M + 0.008):
                 suction_attached = True
                 if attached_step == -1:
-                    attached_step = step
+                    attached_step = total_steps
             elif not suction_on:
                 suction_attached = False
 
@@ -186,38 +189,75 @@ def run_suction_suite():
                     "image_wrist": np.ones((1, 2), dtype=bool),
                     "timestep": np.ones((1, 2), dtype=bool)
                 },
-                "timestep": np.array([[0, step]], dtype=np.int32),
+                "timestep": np.array([[0, total_steps]], dtype=np.int32),
                 "timestep_pad_mask": np.ones((1, 2), dtype=bool)
             }
 
-            # Pure AI policy inference:
-            rng = jax.random.PRNGKey(b["id"] * 1000 + step * 7)
+            # Pure AI policy inference: chunk of 4 actions
+            rng = jax.random.PRNGKey(b["id"] * 1000 + total_steps * 7)
             pred_actions = model.sample_actions(obs, task, rng=rng, unnormalization_statistics=stats)
-            act = np.array(pred_actions[0, 0])
+            actions_chunk = np.array(pred_actions[0]) # (4, 7)
 
-            dx, dy, dz, grip = float(act[0]), float(act[1]), float(act[2]), float(act[6])
+            # Execute the 4 predicted actions in sequence (Receding Horizon)
+            for chunk_idx in range(len(actions_chunk)):
+                if total_steps >= b["max_steps"]:
+                    break
+                total_steps += 1
+                act = actions_chunk[chunk_idx]
+                dx, dy, dz, grip = float(act[0]), float(act[1]), float(act[2]), float(act[6])
 
-            # Apply actions purely as predicted by policy:
-            ee[0] = float(np.clip(ee[0] + dx, 0.160, 0.310))
-            ee[1] = float(np.clip(ee[1] + dy, -0.150, 0.150))
-            # Keep sucker above table contact level to prevent crash:
-            ee[2] = float(np.clip(ee[2] + dz, CONTACT_EE_Z_M - 0.004, 0.120))
+                # Apply actions purely as predicted by policy:
+                ee[0] = float(np.clip(ee[0] + dx, 0.160, 0.310))
+                ee[1] = float(np.clip(ee[1] + dy, -0.150, 0.150))
+                # Keep sucker above table contact level to prevent crash:
+                ee[2] = float(np.clip(ee[2] + dz, CONTACT_EE_Z_M - 0.004, 0.120))
 
-            # Suction pump control:
-            # Model output grip < 0.5 activates suction pump:
-            suction_on = bool(grip < 0.5)
+                # Suction pump control:
+                suction_on = bool(grip < 0.5)
 
-            print(f"  Step {step:02d}: EE=[{ee[0]:.3f}, {ee[1]:.3f}, {ee[2]:.3f}] | Act=[{dx:+.3f}, {dy:+.3f}, {dz:+.3f}] | Grip={grip:.2f} ({'SUCTION ON' if suction_on else 'OFF'}) | TipDist={dist_3d*1000:.1f}mm | Attached={suction_attached}")
+                sucker_tip_pos = np.array([ee[0], ee[1], ee[2] - SUCKER_LENGTH_M])
+                dist_xy = float(np.linalg.norm(sucker_tip_pos[:2] - cube_pos[:2]))
+                dist_3d = float(np.linalg.norm(sucker_tip_pos - cube_pos))
+                min_tip_dist = min(min_tip_dist, dist_3d)
 
-            # Compose multi-camera dashboard:
-            frame = np.full((544, 960, 3), 20, dtype=np.uint8)
-            frame[:480, :640] = cv2.resize(img_tp, (640, 480))
-            frame[:210, 670:950] = cv2.resize(img_primary, (280, 210))
-            frame[230:390, 670:950] = cv2.resize(img_w, (280, 160))
+                if suction_on and dist_xy < 0.025 and (sucker_tip_pos[2] <= CUBE_TOP_Z_M + 0.008):
+                    suction_attached = True
+                    if attached_step == -1:
+                        attached_step = total_steps
+                elif not suction_on:
+                    suction_attached = False
 
-            cv2.putText(frame, f"SUCTION OCTO #{b['id']} | STEP {step:02d}/{b['max_steps']} | SUCTION: {'ATTACHED' if suction_attached else ('ON' if suction_on else 'OFF')}", (15, 515), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 200), 1, cv2.LINE_AA)
-            cv2.putText(frame, f"Task: \"{b['instruction']}\" | Act: [{dx:+.3f}, {dy:+.3f}, {dz:+.3f}] | Sucker Tip Z: {(sucker_tip_pos[2] - TABLE_Z_M)*1000:+.1f}mm", (15, 535), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 255), 1, cv2.LINE_AA)
-            writer.append_data(frame)
+                if suction_attached:
+                    cube_pos = np.array([ee[0], ee[1], sucker_tip_pos[2] - 0.012])
+                elif cube_pos[2] > TABLE_Z_M + 0.012:
+                    cube_pos[2] = max(cube_pos[2] - 0.008, TABLE_Z_M + 0.012)
+
+                print(f"  Step {total_steps:02d} [chunk {chunk_idx+1}/4]: EE=[{ee[0]:.3f}, {ee[1]:.3f}, {ee[2]:.3f}] | Act=[{dx:+.3f}, {dy:+.3f}, {dz:+.3f}] | Grip={grip:.2f} ({'SUCTION ON' if suction_on else 'OFF'}) | TipDist={dist_3d*1000:.1f}mm | Attached={suction_attached}")
+
+                # Re-render frame with newly updated EE position
+                j_step = kin.inverse(ee[0], ee[1], ee[2], ee[3])
+                t_step = renderer.compute_urdf_transforms(j_step[0], j_step[1], j_step[2], j_step[3], gripper_closed=False)
+                s_step = renderer.build_scene(
+                    t_step,
+                    cube_pos=cube_pos,
+                    cube_color_rgb=cube_rgb,
+                    plat_pos=plat_pos,
+                    plat_color_rgb=plat_rgb,
+                    distractor_cubes=b["distractor_cubes"],
+                    distractor_plats=b["distractor_plats"],
+                    end_effector="suction"
+                )
+                _, img_w_step, img_tp_step = renderer.render_views(s_step, t_step["ee_pos"])
+
+                # Compose multi-camera dashboard:
+                frame = np.full((544, 960, 3), 20, dtype=np.uint8)
+                frame[:480, :640] = cv2.resize(img_tp_step, (640, 480))
+                frame[:210, 670:950] = cv2.resize(img_tp_step, (280, 210))
+                frame[230:390, 670:950] = cv2.resize(img_w_step, (280, 160))
+
+                cv2.putText(frame, f"SUCTION OCTO #{b['id']} | STEP {total_steps:02d}/{b['max_steps']} | SUCTION: {'ATTACHED' if suction_attached else ('ON' if suction_on else 'OFF')}", (15, 515), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 200), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"Task: \"{b['instruction']}\" | Act: [{dx:+.3f}, {dy:+.3f}, {dz:+.3f}] | Sucker Tip Z: {(sucker_tip_pos[2] - TABLE_Z_M)*1000:+.1f}mm", (15, 535), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 255), 1, cv2.LINE_AA)
+                writer.append_data(frame)
 
         result_entry = {
             "id": b["id"],
