@@ -123,11 +123,12 @@ class DobotURDFRenderer:
         scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.4, 0.4, 0.4])
 
         # 1. Physical Table Surface
-        # Calibrated with real hardware ground-truth measurement:
-        # Physical measurement with sucker resting on table: EE Z = -69.2 mm (-0.0692 m)
-        # Sucker tip extends 80mm downwards -> Table plane is at Z = -0.0112 m in URDF world
-        table_top_z = -0.0112
-        table_thick = 0.015
+        # Ground-truth table plane from physical Dobot measurement:
+        # With sucker resting on table, hardware measures: EE Z = -69.2 mm (-0.0692 m).
+        # Sucker extends 80mm downwards -> Sucker tip touches table at Z = -0.0692 - 0.080 = -0.1492 m.
+        # Therefore, the top surface of the table is at exactly Z = -0.1492 m in the URDF world frame.
+        table_top_z = -0.1492
+        table_thick = 0.020
         table_mesh = trimesh.creation.box(extents=[0.55, 0.55, table_thick])
         mat_table = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.18, 0.20, 0.25, 1.0], roughnessFactor=0.8)
         table_node = pyrender.Mesh.from_trimesh(trimesh.Trimesh(table_mesh.vertices, table_mesh.faces), material=mat_table, smooth=False)
