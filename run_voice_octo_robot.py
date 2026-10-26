@@ -309,15 +309,16 @@ def main():
                     calibrator.is_calibrated = False
                 elif event.key == pygame.K_r:
                     calibrator.is_calibrated = False
-                    print("[INFO] Calibration reset.")
+                    status_text = "CALIBRATION RESET - SHOW 4 MARKERS TO LOCK"
+                    print("\n[INFO] Calibration reset! Looking for 4 markers to lock perspective once...")
 
         ret, frame = cap.read()
         if not ret or frame is None:
             time.sleep(0.01)
             continue
 
-        # 1. Process calibration on native resolution
-        calibrated_crop, debug_view = calibrator.process_frame(frame, auto_calibrate=True)
+        # 1. Calibrate ONCE initially or when 'r' is pressed. Once locked, never jitter/recalculate!
+        calibrated_crop, debug_view = calibrator.process_frame(frame, auto_calibrate=not calibrator.is_calibrated)
         last_crop = calibrated_crop
 
         # 2. Guarantee debug camera feed fits strictly inside 640x480 box
