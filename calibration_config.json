@@ -5,7 +5,7 @@
     "x_scale": 1.0,
     "y_scale": 1.0,
     "z_scale": 1.0,
-    "z_table_surface_mm": -35.0,
+    "z_table_surface_mm": -69.2,
     "standby_x_mm": 200.0,
     "standby_y_mm": 0.0,
     "standby_z_mm": 140.0

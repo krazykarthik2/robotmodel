@@ -123,18 +123,20 @@ class DobotURDFRenderer:
         scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.4, 0.4, 0.4])
 
         # 1. Physical Table Surface
-        # In Dobot kinematics, the base height L1 is 0.138m (138mm).
-        # The base rests on the table at Z = 0 in world URDF coordinates.
-        # Robot base bottom is at Z = 0.
-        table_mesh = trimesh.creation.box(extents=[0.55, 0.55, 0.015])
+        # Calibrated with real hardware ground-truth measurement:
+        # Physical measurement with sucker resting on table: EE Z = -69.2 mm (-0.0692 m)
+        # Sucker tip extends 80mm downwards -> Table plane is at Z = -0.0112 m in URDF world
+        table_top_z = -0.0112
+        table_thick = 0.015
+        table_mesh = trimesh.creation.box(extents=[0.55, 0.55, table_thick])
         mat_table = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.18, 0.20, 0.25, 1.0], roughnessFactor=0.8)
         table_node = pyrender.Mesh.from_trimesh(trimesh.Trimesh(table_mesh.vertices, table_mesh.faces), material=mat_table, smooth=False)
-        scene.add(table_node, pose=self.make_transform([0.20, 0.0, -0.0075], [0, 0, 0]))
+        scene.add(table_node, pose=self.make_transform([0.20, 0.0, table_top_z - table_thick/2.0], [0, 0, 0]))
 
         # Workspace grid pattern
         border = trimesh.creation.box(extents=[0.52, 0.52, 0.002])
         mat_border = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.24, 0.26, 0.32, 1.0], roughnessFactor=0.9)
-        scene.add(pyrender.Mesh.from_trimesh(trimesh.Trimesh(border.vertices, border.faces), material=mat_border, smooth=False), pose=self.make_transform([0.20, 0.0, 0.001], [0, 0, 0]))
+        scene.add(pyrender.Mesh.from_trimesh(trimesh.Trimesh(border.vertices, border.faces), material=mat_border, smooth=False), pose=self.make_transform([0.20, 0.0, table_top_z + 0.001], [0, 0, 0]))
 
         # 2. Dobot Links
         p_meshes = self._create_pyrender_meshes()

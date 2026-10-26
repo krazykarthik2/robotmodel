@@ -33,7 +33,7 @@ def load_calibration_config():
         "x_scale": 1.0,
         "y_scale": 1.0,
         "z_scale": 1.0,
-        "z_table_surface_mm": -35.0,
+        "z_table_surface_mm": -69.2,
         "standby_x_mm": 200.0,
         "standby_y_mm": 0.0,
         "standby_z_mm": 140.0
@@ -69,12 +69,17 @@ def enforce_dobot_workspace_limits(x, y, z):
        - Yaw angle |j1| <= 75.0 degrees (keeps target strictly in front work area)
        - X >= 60.0 mm (prevents commanding arm behind the robot)
     3. Vertical Height with 8cm Suction Cup:
-       - Min Z = -35.0 mm (table surface contact level with objects; prevents crashing table)
+       - Table Surface Z = -69.2 mm (measured directly when sucker rests on table)
+       - Min Z = -67.0 mm (grasping cubes/objects resting on table; prevents motor stall/crash)
        - Max Z = 145.0 mm (safe observation ceiling)
     """
+    TABLE_SURFACE_Z = -69.2
+    MIN_Z = TABLE_SURFACE_Z + 2.0 # -67.2 mm: touches cube surface without crushing table
+    MAX_Z = 145.0
+
     clamped_x = float(x)
     clamped_y = float(y)
-    clamped_z = float(np.clip(z, -35.0, 145.0))
+    clamped_z = float(np.clip(z, MIN_Z, MAX_Z))
 
     if clamped_x < 60.0:
         clamped_x = 60.0
