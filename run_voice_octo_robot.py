@@ -1,12 +1,10 @@
 """
 Interactive Robot Command & Calibration Center:
-1. Displays the calibrated Octo POV (256x256) side-by-side with raw camera feed
-2. Auto-connects and turns on the real Dobot Magician (native USB serial / alarms cleared)
-3. Accepts tasks either by:
-   - Voice Microphone (Press [v] or [m] and speak your instruction)
-   - Typing in the console (Press [t] and type your command)
-4. Evaluates the Octo Foundation Model on the live calibrated camera observation
-5. Moves the physical robot to execute the vision-language task
+- Normalizes whatever the camera resolution, aspect ratio, or angle might be to exactly 640x480 inside the main viewport
+- Calibrates the perspective distortion using ArUco and shows the rectified Octo POV (256x256 / 300x300)
+- Auto-connects and powers on the real Dobot Magician
+- Accepts tasks by Voice Microphone [v/m] or Console Typing [t]
+- Executes the Octo policy on the physical robot with [SPACE]
 """
 import os
 import sys
@@ -28,9 +26,33 @@ from octo.model.octo_model import OctoModel
 import jax
 
 def cv2_to_pygame_surface(cv_img):
+    """Converts a BGR or RGB OpenCV image to a Pygame Surface."""
     rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
     h, w = rgb.shape[:2]
     return pygame.image.frombuffer(rgb.tobytes(), (w, h), "RGB")
+
+def fit_to_640x480(frame):
+    """
+    Guarantees the raw camera feed fits inside a 640x480 frame:
+    - Maintains original aspect ratio
+    - Centers image with clean letterboxing
+    - Works with any resolution (720p, 1080p, 4:3, 16:9, tilted angle)
+    """
+    target_w, target_h = 640, 480
+    h, w = frame.shape[:2]
+    
+    scale = min(target_w / w, target_h / h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    
+    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    
+    # Create clean dark canvas
+    canvas = np.full((target_h, target_w, 3), 18, dtype=np.uint8)
+    x_offset = (target_w - new_w) // 2
+    y_offset = (target_h - new_h) // 2
+    canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized
+    return canvas
 
 def open_camera(cam_src, force_mjpeg=True):
     if isinstance(cam_src, str) and (cam_src.startswith("http://") or cam_src.startswith("rtsp://")):
@@ -42,16 +64,13 @@ def open_camera(cam_src, force_mjpeg=True):
     if cap.isOpened():
         if force_mjpeg:
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*'MJPG'))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        # Let camera open in its best native resolution
         ret, _ = cap.read()
         if not ret:
             cap.release()
             cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
             if not cap.isOpened():
                 cap = cv2.VideoCapture(idx)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     return cap
 
 def main():
@@ -87,7 +106,7 @@ def main():
             print("[ERROR] Could not open camera. Please check connection.")
             return
 
-    # 3. ArUco Calibrator
+    # 3. ArUco Calibrator (Output 256x256 for Octo)
     calibrator = ArucoAutoCalibrator(output_size=(256, 256), marker_size_mm=80.0)
 
     # 4. Load Octo Model
@@ -101,12 +120,12 @@ def main():
 
     # 5. Initialize Pygame Dashboard
     pygame.init()
-    win_w, win_h = 1000, 560
+    # Left: 640x480 (Raw Camera), Right: 300x300 (Calibrated Octo) + UI panels
+    win_w, win_h = 1020, 560
     screen = pygame.display.set_mode((win_w, win_h))
     pygame.display.set_caption("OCTO ROBOT CONTROL: Live Calibrated POV & Voice Interface")
     font = pygame.font.SysFont("Arial", 16)
     font_bold = pygame.font.SysFont("Arial", 18, bold=True)
-    font_large = pygame.font.SysFont("Arial", 22, bold=True)
     clock = pygame.time.Clock()
 
     current_instruction = "pick up the red cube and place it on the green platform"
@@ -117,7 +136,7 @@ def main():
     print("\n" + "=" * 60)
     print("SYSTEM READY: HOW TO GIVE INSTRUCTIONS")
     print("=" * 60)
-    print("  [v] or [m] -> SPEAK via MICROPHONE (e.g. 'push yellow cube onto cyan target')")
+    print("  [v] or [m] -> SPEAK via MICROPHONE (e.g. 'pick up the red cube and place on green')")
     print("  [t]        -> TYPE instruction into this terminal console")
     print("  [SPACE]    -> EXECUTE current instruction with Octo on Dobot")
     print("  [c]        -> SWITCH camera (Camera 0 <-> Camera 1)")
@@ -184,7 +203,7 @@ def main():
 
             target_x = np.clip(cur_pose['x'] + dx_mm, 150.0, 300.0)
             target_y = np.clip(cur_pose['y'] + dy_mm, -150.0, 150.0)
-            target_z = np.clip(cur_pose['z'] + dz_mm, 35.0, 160.0) # Keeps safely above table
+            target_z = np.clip(cur_pose['z'] + dz_mm, 35.0, 160.0)
 
             print(f"  Step {s_idx}: Move to X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f} | Gripper: {grip_val:.2f}")
             dobot.move_to_xyz(target_x, target_y, target_z)
@@ -209,10 +228,8 @@ def main():
                 if event.key in [pygame.K_q, pygame.K_ESCAPE]:
                     running = False
                 elif event.key in [pygame.K_v, pygame.K_m]:
-                    # Voice input triggered
                     threading.Thread(target=voice_listener_worker, daemon=True).start()
                 elif event.key == pygame.K_t:
-                    # Type input in console
                     status_text = "ENTER INSTRUCTION IN CONSOLE..."
                     print("\n" + ">" * 15 + " ENTER YOUR INSTRUCTION IN TERMINAL " + "<" * 15)
                     try:
@@ -221,14 +238,12 @@ def main():
                             current_instruction = typed
                             status_text = f"INSTRUCTION SET: \"{typed}\""
                             print(f"[UPDATED]: \"{current_instruction}\"")
-                    except Exception as e:
+                    except Exception:
                         pass
                 elif event.key == pygame.K_SPACE:
-                    # Execute
                     if not is_executing:
                         threading.Thread(target=execute_octo_on_robot, daemon=True).start()
                 elif event.key == pygame.K_c:
-                    # Switch Camera
                     src_idx = (src_idx + 1) % len(cam_sources)
                     active_src = cam_sources[src_idx]
                     print(f"\n[INFO] Switching to Camera: '{active_src}'...")
@@ -244,48 +259,51 @@ def main():
             time.sleep(0.01)
             continue
 
+        # 1. Process calibration on native resolution
         calibrated_crop, debug_view = calibrator.process_frame(frame, auto_calibrate=True)
         last_crop = calibrated_crop
+
+        # 2. Guarantee debug camera feed fits strictly inside 640x480 box
+        camera_640x480 = fit_to_640x480(debug_view)
 
         frame_count += 1
         fps = frame_count / (time.time() - t0 + 1e-5)
 
-        # Pygame Drawing
-        screen.fill((20, 22, 28))
+        # Pygame Rendering
+        screen.fill((18, 20, 26))
 
-        # Left View: Raw Camera Feed with ArUco detections (640x480)
-        cam_surf = cv2_to_pygame_surface(debug_view)
+        # Left View: Standardized 640x480 Viewport
+        cam_surf = cv2_to_pygame_surface(camera_640x480)
         screen.blit(cam_surf, (15, 20))
+        pygame.draw.rect(screen, (60, 65, 80), (14, 19, 642, 482), 1)
 
-        # Right View: Calibrated Octo POV (256x256 -> displayed as 280x280)
-        crop_display = cv2.resize(calibrated_crop, (280, 280))
+        # Right View: Calibrated Octo POV (shown as 320x320)
+        crop_display = cv2.resize(calibrated_crop, (320, 320))
         crop_surf = cv2_to_pygame_surface(crop_display)
-        screen.blit(crop_surf, (685, 20))
-        pygame.draw.rect(screen, (0, 240, 180), (684, 19, 282, 282), 2)
+        screen.blit(crop_surf, (675, 20))
+        pygame.draw.rect(screen, (0, 240, 180), (674, 19, 322, 322), 2)
 
         # Overlays & Telemetry
         lbl_octo = font_bold.render("OCTO CALIBRATED POV (256x256)", True, (0, 240, 180))
-        screen.blit(lbl_octo, (685, 310))
+        screen.blit(lbl_octo, (675, 350))
 
-        cal_status = "ARUCO: CALIBRATED (16x16cm Table)" if calibrator.is_calibrated else "ARUCO: SEARCHING FOR MARKERS 0, 1, 2, 3"
+        cal_status = "ARUCO: CALIBRATED (16x16cm Rectified)" if calibrator.is_calibrated else "ARUCO: DETECTING 4 MARKERS..."
         cal_col = (50, 255, 120) if calibrator.is_calibrated else (255, 90, 90)
-        screen.blit(font.render(cal_status, True, cal_col), (685, 335))
+        screen.blit(font.render(cal_status, True, cal_col), (675, 375))
 
         rob_status = f"ROBOT: {'CONNECTED (LIVE HARDWARE)' if dobot.connected else 'SIMULATION / DRY-RUN'}"
         rob_col = (0, 220, 255) if dobot.connected else (255, 200, 80)
-        screen.blit(font.render(rob_status, True, rob_col), (685, 360))
+        screen.blit(font.render(rob_status, True, rob_col), (675, 400))
 
-        # Status text
-        screen.blit(font.render(f"STATUS: {status_text}", True, (255, 255, 255)), (15, 515))
-
-        # Current Instruction Box
-        pygame.draw.rect(screen, (32, 36, 48), (15, 470, 950, 40), border_radius=4)
+        # Bottom Bar: Task Instruction & Status
+        pygame.draw.rect(screen, (28, 32, 42), (15, 510, 985, 40), border_radius=4)
         lbl_inst = font_bold.render(f"TASK: \"{current_instruction}\"", True, (255, 215, 0))
-        screen.blit(lbl_inst, (25, 480))
+        screen.blit(lbl_inst, (25, 520))
 
         # Hotkeys help bar
         help_str = "[v/m] Speak Mic  |  [t] Type Text  |  [SPACE] Run Octo  |  [c] Switch Cam  |  [q] Quit"
-        screen.blit(font.render(help_str, True, (160, 175, 200)), (685, 410))
+        screen.blit(font.render(help_str, True, (160, 175, 200)), (675, 440))
+        screen.blit(font.render(f"STATUS: {status_text}", True, (255, 255, 255)), (15, 502))
 
         pygame.display.flip()
         clock.tick(30)
