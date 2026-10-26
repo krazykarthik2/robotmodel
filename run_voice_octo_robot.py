@@ -182,7 +182,7 @@ def main():
     status_text = "READY - WAITING FOR COMMAND"
     is_executing = False
     last_crop = None
-    gripper_state = False
+    suction_state = False
     last_sim_frame = np.full((360, 480, 3), 20, dtype=np.uint8)
     sim_update_counter = 0
 
@@ -213,7 +213,7 @@ def main():
             status_text = "MIC TIMEOUT (NO SPEECH DETECTED)"
 
     def execute_octo_on_robot():
-        nonlocal is_executing, status_text, gripper_state
+        nonlocal is_executing, status_text, suction_state
         if last_crop is None:
             return
         is_executing = True
@@ -269,25 +269,27 @@ def main():
 
                 target_x = float(np.clip(cur_pose['x'] + dx_mm, 150.0, 310.0))
                 target_y = float(np.clip(cur_pose['y'] + dy_mm, -160.0, 160.0))
-                # Tool tip clearance safety: prevent end effector from plunging into table
-                target_z = float(np.clip(cur_pose['z'] + dz_mm, 20.0, 160.0))
+                # Sucker tip clearance: suction cup is 80mm long.
+                # Safe minimum EE Z is -20mm (tip touches surface at table contact)
+                target_z = float(np.clip(cur_pose['z'] + dz_mm, -25.0, 150.0))
 
-                print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f} | Grip: {grip_val:.2f}")
-                # Use wait=True so the physical robot actually finishes moving to target before the next action is commanded
+                print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f} | Sucker: {grip_val:.2f}")
                 dobot.move_to_xyz(target_x, target_y, target_z, wait=True)
 
+                # Sucker control
                 if grip_val > 0.5:
-                    dobot.set_gripper("close")
-                    gripper_state = True
+                    dobot.set_suction(True)
+                    suction_state = True
                 else:
-                    dobot.set_gripper("open")
-                    gripper_state = False
+                    dobot.set_suction(False)
+                    suction_state = False
 
                 cur_pose = dobot.get_pose()
 
-        # Explicitly stop suction and release gripper after task rollout finishes
+        # Explicitly stop suction after task rollout finishes
         dobot.set_suction(False)
         dobot.set_gripper("off")
+        suction_state = False
         status_text = "TASK ROLLOUT FINISHED! (SUCTION STOPPED)"
         is_executing = False
         print(f"\n[SUCCESS] Completed {total_chunks} policy rollout cycles. Suction stopped.\n")
@@ -341,15 +343,26 @@ def main():
         if sim_update_counter % 2 == 0: # 15 FPS simulation sync
             try:
                 cur_p = dobot.get_pose()
-                x_m, y_m, z_m = cur_p['x'] / 1000.0, cur_p['y'] / 1000.0, cur_p['z'] / 1000.0
+                # Dobot coordinate origin: base Z is 0. Table is located at Z_robot = -55mm approx
+                # Real Dobot firmware uses:
+                # X, Y in mm, Z in mm relative to Dobot base center
+                x_m = float(cur_p['x']) / 1000.0
+                y_m = float(cur_p['y']) / 1000.0
+                z_m = float(cur_p['z']) / 1000.0
+
+                # Compute exact joint angles for URDF kinematic links
+                # DobotKinematics base height L1 is 0.138m
                 j_calc = dobot_kin.inverse(x_m, y_m, z_m)
-                t_m = sim_renderer.compute_urdf_transforms(j_calc[0], j_calc[1], j_calc[2], 0.0, gripper_closed=gripper_state)
-                # Table workspace matching real table
-                scene = sim_renderer.build_scene(t_m,
-                    cube_pos=[0.20, 0.05, 0.012], cube_color_rgb=[0.9, 0.2, 0.2],
-                    plat_pos=[0.22, -0.08, 0.003], plat_color_rgb=[0.2, 0.8, 0.3])
+                
+                # Transform URDF mesh tree
+                t_m = sim_renderer.compute_urdf_transforms(
+                    j_calc[0], j_calc[1], j_calc[2], 0.0, gripper_closed=False
+                )
+
+                # Render with physical 8cm sucker attached
+                scene = sim_renderer.build_scene(t_m, end_effector="suction")
                 _, _, last_sim_frame = sim_renderer.render_views(scene, t_m['ee_pos'])
-            except Exception:
+            except Exception as e:
                 pass
 
         # 3. Guarantee debug camera feed fits strictly inside 640x480 box
@@ -391,7 +404,7 @@ def main():
         screen.blit(lbl_sim, (990, 390))
 
         cur_p = dobot.get_pose()
-        telemetry_str = f"EE: X={cur_p['x']:.1f} Y={cur_p['y']:.1f} Z={cur_p['z']:.1f}mm | Grip: {'CLOSED' if gripper_state else 'OPEN'}"
+        telemetry_str = f"EE: X={cur_p['x']:.1f} Y={cur_p['y']:.1f} Z={cur_p['z']:.1f}mm | Sucker: {'ON (SUCKING)' if suction_state else 'OFF'}"
         screen.blit(font.render(telemetry_str, True, (200, 215, 240)), (990, 415))
 
         # Bottom Bar: Task Instruction & Status

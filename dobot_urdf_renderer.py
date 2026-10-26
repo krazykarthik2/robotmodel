@@ -102,6 +102,7 @@ class DobotURDFRenderer:
             "gripper": V_gripper,
             "jaw_l": V_jaw_l,
             "jaw_r": V_jaw_r,
+            "ee_world": W_gripper,
             "ee_pos": W_gripper[:3, 3]
         }
 
@@ -118,10 +119,11 @@ class DobotURDFRenderer:
             "jaw_r": pyrender.Mesh.from_trimesh(trimesh.Trimesh(vertices=self.raw_meshes["jaw_r"].vertices, faces=self.raw_meshes["jaw_r"].faces), material=self.mat_robot_silver, smooth=True),
         }
 
-    def build_scene(self, transforms, cube_pos, cube_color_rgb, plat_pos, plat_color_rgb, distractor_cubes=None, distractor_plats=None):
+    def build_scene(self, transforms, cube_pos=None, cube_color_rgb=None, plat_pos=None, plat_color_rgb=None, distractor_cubes=None, distractor_plats=None, end_effector="suction"):
         scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.4, 0.4, 0.4])
 
-        # 1. Workspace Table
+        # 1. Physical Table Surface
+        # In physical world, table is at Z = 0 (base sitting on table)
         table_mesh = trimesh.creation.box(extents=[0.55, 0.55, 0.015])
         mat_table = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.18, 0.20, 0.25, 1.0], roughnessFactor=0.8)
         table_node = pyrender.Mesh.from_trimesh(trimesh.Trimesh(table_mesh.vertices, table_mesh.faces), material=mat_table, smooth=False)
@@ -134,35 +136,47 @@ class DobotURDFRenderer:
 
         # 2. Dobot Links
         p_meshes = self._create_pyrender_meshes()
-        for name in ["base", "link1", "link2", "link3", "link4", "gripper", "jaw_l", "jaw_r"]:
+        # Add base and arm links 1-4
+        for name in ["base", "link1", "link2", "link3", "link4"]:
             scene.add(p_meshes[name], pose=transforms[name])
 
+        if end_effector == "suction":
+            # Suction Cup: Extends exactly 8.0 cm (0.080 m) down from the EE mounting origin
+            # Stem (cylinder)
+            stem = trimesh.creation.cylinder(radius=0.008, height=0.065)
+            mat_stem = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.15, 0.15, 0.17, 1.0], metallicFactor=0.8)
+            p_stem = pyrender.Mesh.from_trimesh(trimesh.Trimesh(stem.vertices, stem.faces), material=mat_stem, smooth=True)
+            # Suction cup rubber head
+            cup = trimesh.creation.cylinder(radius=0.014, height=0.015)
+            mat_cup = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.9, 0.35, 0.1, 1.0], roughnessFactor=0.9)
+            p_cup = pyrender.Mesh.from_trimesh(trimesh.Trimesh(cup.vertices, cup.faces), material=mat_cup, smooth=True)
+
+            ee_pose = transforms["ee_world"]
+            # Rotate stem/cup so height is along vertical Z axis downwards
+            T_stem = ee_pose @ self.make_transform([0, 0, -0.035], [0, 0, 0])
+            T_cup = ee_pose @ self.make_transform([0, 0, -0.0725], [0, 0, 0])
+            scene.add(p_stem, pose=T_stem)
+            scene.add(p_cup, pose=T_cup)
+        else:
+            # Gripper with jaws
+            for name in ["gripper", "jaw_l", "jaw_r"]:
+                scene.add(p_meshes[name], pose=transforms[name])
+
         # 3. Target Platform
-        plat_mesh = trimesh.creation.cylinder(radius=0.035, height=0.006)
-        mat_plat = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*plat_color_rgb, 1.0], roughnessFactor=0.4)
-        p_plat = pyrender.Mesh.from_trimesh(trimesh.Trimesh(plat_mesh.vertices, plat_mesh.faces), material=mat_plat, smooth=True)
-        scene.add(p_plat, pose=self.make_transform(plat_pos, [0, 0, 0]))
+        if plat_pos is not None:
+            p_rgb = plat_color_rgb if plat_color_rgb else [0.2, 0.85, 0.3]
+            plat_mesh = trimesh.creation.cylinder(radius=0.035, height=0.006)
+            mat_plat = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*p_rgb, 1.0], roughnessFactor=0.4)
+            p_plat = pyrender.Mesh.from_trimesh(trimesh.Trimesh(plat_mesh.vertices, plat_mesh.faces), material=mat_plat, smooth=True)
+            scene.add(p_plat, pose=self.make_transform(plat_pos, [0, 0, 0]))
 
         # 4. Target Cube
-        cube_mesh = trimesh.creation.box(extents=[0.024, 0.024, 0.024])
-        mat_cube = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*cube_color_rgb, 1.0], roughnessFactor=0.3)
-        p_cube = pyrender.Mesh.from_trimesh(trimesh.Trimesh(cube_mesh.vertices, cube_mesh.faces), material=mat_cube, smooth=False)
-        scene.add(p_cube, pose=self.make_transform(cube_pos, [0, 0, 0]))
-
-        # 5. Distractors
-        if distractor_cubes:
-            for d_rgb, d_pos in distractor_cubes:
-                dc_m = trimesh.creation.box(extents=[0.022, 0.022, 0.022])
-                mat_dc = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*d_rgb, 1.0], roughnessFactor=0.3)
-                p_dc = pyrender.Mesh.from_trimesh(trimesh.Trimesh(dc_m.vertices, dc_m.faces), material=mat_dc, smooth=False)
-                scene.add(p_dc, pose=self.make_transform(d_pos, [0, 0, 0]))
-
-        if distractor_plats:
-            for dp_rgb, dp_pos in distractor_plats:
-                dp_m = trimesh.creation.cylinder(radius=0.035, height=0.006)
-                mat_dp = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*dp_rgb, 1.0], roughnessFactor=0.4)
-                p_dp = pyrender.Mesh.from_trimesh(trimesh.Trimesh(dp_m.vertices, dp_m.faces), material=mat_dp, smooth=True)
-                scene.add(p_dp, pose=self.make_transform(dp_pos, [0, 0, 0]))
+        if cube_pos is not None:
+            c_rgb = cube_color_rgb if cube_color_rgb else [0.9, 0.2, 0.2]
+            cube_mesh = trimesh.creation.box(extents=[0.024, 0.024, 0.024])
+            mat_cube = pyrender.MetallicRoughnessMaterial(baseColorFactor=[*c_rgb, 1.0], roughnessFactor=0.3)
+            p_cube = pyrender.Mesh.from_trimesh(trimesh.Trimesh(cube_mesh.vertices, cube_mesh.faces), material=mat_cube, smooth=False)
+            scene.add(p_cube, pose=self.make_transform(cube_pos, [0, 0, 0]))
 
         return scene
 
