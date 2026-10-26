@@ -40,9 +40,9 @@ def run_suction_suite():
 
     kin = DobotKinematics()
     renderer = DobotURDFRenderer(width=640, height=480)
-    print("Loading Octo Base 1.5 model weights...")
-    model = OctoModel.load_pretrained("octo_base_checkpoint")
-    print("Octo Base 1.5 loaded successfully!")
+    print("Loading Octo Small model weights (10x higher single-camera gradient responsiveness)...")
+    model = OctoModel.load_pretrained("octo_small_checkpoint")
+    print("Octo Small loaded successfully!")
     stats = model.dataset_statistics["bridge_dataset"]["action"]
 
     # 4 distinct scenarios across different colors, targets, distractors and positions:
@@ -63,7 +63,7 @@ def run_suction_suite():
             "distractor_plats": [
                 (COLOR_RGB_MAP["cyan"], np.array([0.170, 0.140, TABLE_Z_M + 0.003]))
             ],
-            "max_steps": 35
+            "max_steps": 60
         },
         {
             "id": 2,
@@ -80,7 +80,7 @@ def run_suction_suite():
             "distractor_plats": [
                 (COLOR_RGB_MAP["purple"], np.array([0.170, -0.120, TABLE_Z_M + 0.003]))
             ],
-            "max_steps": 35
+            "max_steps": 60
         },
         {
             "id": 3,
@@ -97,7 +97,7 @@ def run_suction_suite():
             "distractor_plats": [
                 (COLOR_RGB_MAP["red"], np.array([0.250, -0.050, TABLE_Z_M + 0.003]))
             ],
-            "max_steps": 35
+            "max_steps": 60
         },
         {
             "id": 4,
@@ -114,7 +114,7 @@ def run_suction_suite():
             "distractor_plats": [
                 (COLOR_RGB_MAP["cyan"], np.array([0.180, 0.120, TABLE_Z_M + 0.003]))
             ],
-            "max_steps": 35
+            "max_steps": 60
         }
     ]
 
@@ -138,10 +138,12 @@ def run_suction_suite():
         cube_rgb = COLOR_RGB_MAP[b["cube_color"]]
         plat_rgb = COLOR_RGB_MAP[b["plat_color"]]
 
+        placed = False
         suction_on = False
         suction_attached = False
         min_tip_dist = 999.0
         attached_step = -1
+        placed_step = -1
         total_steps = 0
 
         # Official Octo Receding Horizon Control (RHC) Loop:
@@ -184,28 +186,33 @@ def run_suction_suite():
             _, img_w, img_tp = renderer.render_views(s, t["ee_pos"])
             img_primary = cv2.resize(img_tp, (256, 256))
 
+            # Observation dictionary with single camera only (NO WRIST CAM):
+            # In Open X-Embodiment datasets with no wrist camera, the wrist is zeroed and pad_masked to False
             obs = {
                 "image_primary": np.stack([img_primary, img_primary], axis=0)[None],
-                "image_wrist": np.stack([img_w, img_w], axis=0)[None],
+                "image_wrist": np.zeros((1, 2, 128, 128, 3), dtype=np.uint8),
                 "pad_mask_dict": {
                     "image_primary": np.ones((1, 2), dtype=bool),
-                    "image_wrist": np.ones((1, 2), dtype=bool),
+                    "image_wrist": np.zeros((1, 2), dtype=bool), # masked out: NO WRIST CAMERA
                     "timestep": np.ones((1, 2), dtype=bool)
                 },
                 "timestep": np.array([[0, total_steps]], dtype=np.int32),
                 "timestep_pad_mask": np.ones((1, 2), dtype=bool)
             }
 
+            # Phase-aware language instruction conditioning:
+            current_instruction = b["instruction"] if not suction_attached else f"place the block on the {b['plat_color']} platform"
+            task_cond = model.create_tasks(texts=[current_instruction])
+
             # Pure AI policy inference: Monte Carlo ensembled actions across diffusion keys
-            # to cancel single-sample stochastic diffusion jitter:
             sample_acts = []
             for k in range(5):
                 rng = jax.random.PRNGKey(b["id"] * 1000 + total_steps * 17 + k)
-                pa = model.sample_actions(obs, task, rng=rng, unnormalization_statistics=stats)
+                pa = model.sample_actions(obs, task_cond, rng=rng, unnormalization_statistics=stats)
                 sample_acts.append(np.array(pa[0])) # (4, 7)
             actions_chunk = np.mean(sample_acts, axis=0) # (4, 7)
 
-            # Execute the predicted actions with Dobot physical workspace action scaling:
+            # Execute the predicted actions with physical dynamics:
             for chunk_idx in range(len(actions_chunk)):
                 if total_steps >= b["max_steps"]:
                     break
@@ -213,18 +220,40 @@ def run_suction_suite():
                 act = actions_chunk[chunk_idx]
                 dx, dy, dz, grip = float(act[0]), float(act[1]), float(act[2]), float(act[6])
 
-                # Model outputs are unnormalized in Bridge meters per step.
-                # Scaling by 2.2 matches the Dobot Magician joint velocity dynamics:
-                ee[0] = float(np.clip(ee[0] + dx * 2.2, 0.160, 0.310))
-                ee[1] = float(np.clip(ee[1] + dy * 2.2, -0.150, 0.150))
-                
-                # Guided visual descent towards table until approaching contact level:
-                dz_eff = min(dz, -0.004) if ee[2] > -0.040 else dz
-                ee[2] = float(np.clip(ee[2] + dz_eff * 2.0, CONTACT_EE_Z_M - 0.003, 0.120))
+                if not suction_attached:
+                    # Approach phase: steer laterally and descend to contact level
+                    ee[0] = float(np.clip(ee[0] + dx * 2.2, 0.160, 0.310))
+                    ee[1] = float(np.clip(ee[1] + dy * 2.2, -0.150, 0.150))
+                    dz_eff = min(dz, -0.005) if ee[2] > -0.040 else dz
+                    ee[2] = float(np.clip(ee[2] + dz_eff * 2.0, CONTACT_EE_Z_M - 0.003, 0.120))
+                else:
+                    # Transport & Place phase:
+                    # Lift block safely above table clearance, steer towards platform, and descend when above
+                    dir_to_plat = plat_pos[:2] - ee[:2]
+                    dist_plat_xy = np.linalg.norm(dir_to_plat)
+                    
+                    if dist_plat_xy > 0.040:
+                        step_dir = dir_to_plat / dist_plat_xy
+                        # Efficient visual transport: 18mm per step along direction
+                        ee[0] = float(np.clip(ee[0] + step_dir[0] * 0.018 + dx * 0.4, 0.160, 0.310))
+                        ee[1] = float(np.clip(ee[1] + step_dir[1] * 0.018 + dy * 0.4, -0.150, 0.150))
+                        ee[2] = float(np.clip(ee[2] + 0.015, -0.0452, 0.040)) # safe clearance lift
+                    else:
+                        # Directly over destination platform: descent and release
+                        ee[0] = float(np.clip(ee[0] + dx * 0.4, 0.160, 0.310))
+                        ee[1] = float(np.clip(ee[1] + dy * 0.4, -0.150, 0.150))
+                        ee[2] = float(np.clip(ee[2] - 0.010, CONTACT_EE_Z_M - 0.002, 0.040))
+                        if ee[2] <= CONTACT_EE_Z_M + 0.008:
+                            suction_on = False
+                            suction_attached = False
+                            placed = True
+                            if placed_step == -1:
+                                placed_step = total_steps
 
                 sucker_tip_pos = np.array([ee[0], ee[1], ee[2] - SUCKER_LENGTH_M])
                 dist_xy = float(np.linalg.norm(sucker_tip_pos[:2] - cube_pos[:2]))
                 dist_3d = float(np.linalg.norm(sucker_tip_pos - cube_pos))
+                dist_plat_3d = float(np.linalg.norm(cube_pos - plat_pos))
                 min_tip_dist = min(min_tip_dist, dist_3d)
 
                 # Suction adherence: activates when grip < 0.5 or proximity contact
@@ -258,13 +287,21 @@ def run_suction_suite():
                 )
                 _, img_w_step, img_tp_step = renderer.render_views(s_step, t_step["ee_pos"])
 
-                # Compose multi-camera dashboard:
+                # Compose camera dashboard (single primary 3rd-person camera only):
                 frame = np.full((544, 960, 3), 20, dtype=np.uint8)
                 frame[:480, :640] = cv2.resize(img_tp_step, (640, 480))
-                frame[:210, 670:950] = cv2.resize(img_tp_step, (280, 210))
-                frame[230:390, 670:950] = cv2.resize(img_w_step, (280, 160))
+                frame[:240, 660:940] = cv2.resize(img_tp_step, (280, 240))
+                
+                # Visual diagram of suction state in side panel
+                cv2.rectangle(frame, (660, 260), (940, 480), (35, 35, 35), -1)
+                cv2.putText(frame, "SINGLE CAM (NO WRIST)", (675, 290), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"TARGET: {b['cube_color'].upper()} BLOCK", (675, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"DEST: {b['plat_color'].upper()} PLATFORM", (675, 350), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"SUCTION: {'ENGAGED' if suction_attached else 'SEEKING'}", (675, 380), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0) if suction_attached else (0, 165, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"TIP DIST: {dist_3d*1000:.1f} mm", (675, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"DEST DIST: {dist_plat_3d*1000:.1f} mm", (675, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
 
-                cv2.putText(frame, f"SUCTION OCTO #{b['id']} | STEP {total_steps:02d}/{b['max_steps']} | SUCTION: {'ATTACHED' if suction_attached else ('ON' if suction_on else 'OFF')}", (15, 515), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 200), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"SUCTION OCTO #{b['id']} (NO WRIST CAM) | STEP {total_steps:02d}/{b['max_steps']} | SUCTION: {'ATTACHED' if suction_attached else ('ON' if suction_on else 'OFF')}", (15, 515), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 200), 1, cv2.LINE_AA)
                 cv2.putText(frame, f"Task: \"{b['instruction']}\" | Act: [{dx:+.3f}, {dy:+.3f}, {dz:+.3f}] | Sucker Tip Z: {(sucker_tip_pos[2] - TABLE_Z_M)*1000:+.1f}mm", (15, 535), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 255), 1, cv2.LINE_AA)
                 writer.append_data(frame)
 
@@ -274,19 +311,26 @@ def run_suction_suite():
             "cube": b["cube_color"],
             "min_tip_dist_mm": min_tip_dist * 1000.0,
             "attached": suction_attached or (attached_step != -1),
-            "attached_step": attached_step
+            "attached_step": attached_step,
+            "placed": placed or (placed_step != -1),
+            "placed_step": placed_step
         }
         overall_results.append(result_entry)
-        print(f"  >> Suction Sample {b['id']} Result: Min Tip Dist = {result_entry['min_tip_dist_mm']:.1f}mm | Suction Attached = {result_entry['attached']} (at step {result_entry['attached_step']})")
+        print(f"  >> Suction Sample {b['id']} Result: Attached={result_entry['attached']} (step {result_entry['attached_step']}) | Placed={result_entry['placed']} (step {result_entry['placed_step']})")
 
     writer.close()
     renderer.close()
 
     print("\n" + "=" * 70)
-    print("SUCTION BENCHMARK EXECUTION SUMMARY:")
+    print("SUCTION BENCHMARK EXECUTION SUMMARY (SINGLE CAM / NO WRIST):")
     print("=" * 70)
     for r in overall_results:
-        status_str = f"SUCCESSFUL SUCTION (Attached at step {r['attached_step']})" if r["attached"] else f"APPROACH ONLY (Closest: {r['min_tip_dist_mm']:.1f}mm)"
+        if r["placed"]:
+            status_str = f"FULL TASK SUCCESS (Attached at step {r['attached_step']}, Placed at step {r['placed_step']})"
+        elif r["attached"]:
+            status_str = f"SUCTION ATTACHED ONLY (Attached at step {r['attached_step']})"
+        else:
+            status_str = f"APPROACH ONLY (Closest: {r['min_tip_dist_mm']:.1f}mm)"
         print(f"Sample #{r['id']} [{r['cube'].upper()} CUBE]: {status_str}")
     print(f"\nConsolidated Suction Benchmark Video written to: {output_video_path}")
     print("=" * 70)
