@@ -54,23 +54,15 @@ def fit_to_640x480(frame):
     canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized
     return canvas
 
-def open_camera(cam_src, force_mjpeg=True):
+def open_camera(cam_src):
     if isinstance(cam_src, str) and (cam_src.startswith("http://") or cam_src.startswith("rtsp://")):
         return cv2.VideoCapture(cam_src)
     idx = int(cam_src) if str(cam_src).isdigit() else 0
-    cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(idx)
-    if cap.isOpened():
-        if force_mjpeg:
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*'MJPG'))
-        # Let camera open in its best native resolution
-        ret, _ = cap.read()
-        if not ret:
-            cap.release()
-            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-            if not cap.isOpened():
-                cap = cv2.VideoCapture(idx)
+    # Try standard open first (fastest and most reliable across USB webcams)
+    cap = cv2.VideoCapture(idx)
+    if not cap.isOpened() or not cap.read()[0]:
+        cap.release()
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
     return cap
 
 def main():
@@ -84,17 +76,27 @@ def main():
     print("\n" + "=" * 60)
     print("STEP 1: CONNECTING & INITIALIZING REAL DOBOT ROBOT")
     print("=" * 60)
+    sys.stdout.flush()
     dobot = DobotUnifiedDriver(port=args.port, prefer_driver="auto")
     is_connected = dobot.connect()
     
     if is_connected:
+        print("[INFO] Setting suction OFF and preparing standby pose...")
+        sys.stdout.flush()
+        dobot.set_suction(False)
+        dobot.set_gripper("off")
         print("[INFO] Moving arm to standby observation pose (X=200, Y=0, Z=140)...")
-        dobot.move_to_xyz(200.0, 0.0, 140.0)
-        dobot.set_gripper("open")
+        sys.stdout.flush()
+        dobot.move_to_xyz(200.0, 0.0, 140.0, wait=False)
+        print("[INFO] Standby position commanded successfully.")
+        sys.stdout.flush()
     else:
         print("[NOTICE] Real robot not detected or offline. Running in DRY-RUN / SIMULATION mode.")
+        sys.stdout.flush()
 
     # 2. Open Camera
+    print("[INFO] Opening camera feed...")
+    sys.stdout.flush()
     cam_sources = [args.camera_id, args.secondary_cam]
     src_idx = 0
     active_src = cam_sources[src_idx]
@@ -106,6 +108,8 @@ def main():
         if not cap.isOpened():
             print("[ERROR] Could not open camera. Please check connection.")
             return
+    print(f"[INFO] Camera successfully opened (Source {active_src}).")
+    sys.stdout.flush()
 
     # 3. ArUco Calibrator (Output 256x256 for Octo)
     calibrator = ArucoAutoCalibrator(output_size=(256, 256), marker_size_mm=80.0)
