@@ -1,9 +1,10 @@
 """
-Live camera viewer with on-the-fly camera switching and ArUco auto-calibration:
-- Direct, instant camera opening for Camera 0 and Camera 1 (no slow/failing index scanning)
-- Uses DirectShow (cv2.CAP_DSHOW) on Windows with safety fallbacks
-- Pygame GUI window showing both camera feed and rectified Octo observation
-- Hotkey [c] -> SWITCH CAMERA (Camera 0 <-> Camera 1)
+Live camera viewer with on-the-fly camera switching, MJPEG support, and ArUco auto-calibration:
+- Supports MJPEG format (cv2.CAP_PROP_FOURCC = 'MJPG') and YUYV/RGB formats automatically
+- Connects to USB Webcams, external MJPEG cameras, or network/phone IP MJPEG streams
+- Safe multi-camera switching: [c] cycles through available cameras (or switches back and forth)
+- Pygame GUI window showing both live camera feed and rectified Octo observation
+- Hotkey [c] -> SWITCH CAMERA (Camera 0 <-> Camera 1 / MJPEG stream)
 - Hotkey [s] -> SAVE current calibrated crop to disk
 - Hotkey [r] -> RESET calibration
 - Hotkey [q] or [ESC] -> QUIT
@@ -17,20 +18,44 @@ import pygame
 
 from aruco_calibrator import ArucoAutoCalibrator
 
-def open_camera(cam_idx):
-    """Safely opens camera with DirectShow backend."""
-    print(f"[INFO] Opening Camera ID: {cam_idx}...")
-    try:
-        cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(cam_idx)
-    except Exception as e:
-        print(f"[WARN] Error with DSHOW, using default backend: {e}")
-        cap = cv2.VideoCapture(cam_idx)
+def open_camera(cam_src, force_mjpeg=True):
+    """
+    Opens camera device (index int or stream URL str) with MJPEG fourcc support.
+    """
+    print(f"[INFO] Opening Camera source '{cam_src}' (MJPEG enabled: {force_mjpeg})...")
     
+    # Check if source is a URL/stream or hardware index
+    if isinstance(cam_src, str) and (cam_src.startswith("http://") or cam_src.startswith("rtsp://") or cam_src.endswith(".mjpg")):
+        cap = cv2.VideoCapture(cam_src)
+        return cap
+
+    # Hardware camera index
+    idx = int(cam_src) if isinstance(cam_src, (int, str)) and str(cam_src).isdigit() else 0
+    
+    # Try DirectShow first on Windows
+    cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(idx)
+
     if cap.isOpened():
+        if force_mjpeg:
+            # Set MJPG codec format
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*'MJPG'))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        
+        # Test frame read
+        ret, frame = cap.read()
+        if not ret:
+            # Fallback to default pixel format if MJPEG isn't supported on this specific device
+            print("[INFO] Retrying camera with default pixel format...")
+            cap.release()
+            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(idx)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
     return cap
 
 def cv2_to_pygame_surface(cv_img):
@@ -40,22 +65,26 @@ def cv2_to_pygame_surface(cv_img):
     return pygame.image.frombuffer(rgb.tobytes(), (w, h), "RGB")
 
 def main():
-    parser = argparse.ArgumentParser(description="Live ArUco Camera with Instant Switching")
-    parser.add_argument("--camera_id", type=int, default=0, help="Initial camera ID: 0 or 1 (default: 0)")
+    parser = argparse.ArgumentParser(description="Live ArUco Camera with MJPEG & Multi-Camera Support")
+    parser.add_argument("--camera_id", default="0", help="Initial camera index (0, 1, ...) or MJPEG stream URL")
+    parser.add_argument("--secondary_cam", default="1", help="Second camera index or MJPEG URL for toggling")
     parser.add_argument("--out_size", type=int, default=256, help="Output crop size for Octo (default: 256)")
+    parser.add_argument("--no_mjpeg", action="store_true", help="Disable MJPEG fourcc request")
     args = parser.parse_args()
 
-    # Pre-configured available cameras list
-    known_cameras = [0, 1]
-    cam_idx = args.camera_id if args.camera_id in known_cameras else 0
+    use_mjpeg = not args.no_mjpeg
+    cam_sources = [args.camera_id, args.secondary_cam]
+    current_src_idx = 0
+    active_src = cam_sources[current_src_idx]
 
-    cap = open_camera(cam_idx)
+    cap = open_camera(active_src, force_mjpeg=use_mjpeg)
     if not cap.isOpened():
-        print(f"[WARN] Could not open camera {cam_idx}. Trying other camera...")
-        cam_idx = 1 if cam_idx == 0 else 0
-        cap = open_camera(cam_idx)
+        print(f"[WARN] Could not open camera '{active_src}'. Trying secondary camera '{cam_sources[1]}'...")
+        current_src_idx = 1
+        active_src = cam_sources[current_src_idx]
+        cap = open_camera(active_src, force_mjpeg=use_mjpeg)
         if not cap.isOpened():
-            print("[ERROR] Neither Camera 0 nor Camera 1 could be opened. Please verify USB connection.")
+            print("[ERROR] Neither camera could be opened. Please check USB plug or stream URL.")
             return
 
     calibrator = ArucoAutoCalibrator(output_size=(args.out_size, args.out_size), marker_size_mm=80.0)
@@ -64,16 +93,20 @@ def main():
     pygame.init()
     win_w, win_h = 960, 520
     screen = pygame.display.set_mode((win_w, win_h))
-    pygame.display.set_caption(f"Dobot ArUco Auto-Calibrator (Camera {cam_idx})")
+    pygame.display.set_caption(f"Dobot ArUco Auto-Calibrator (Source: {active_src})")
     font = pygame.font.SysFont("Arial", 16)
     font_bold = pygame.font.SysFont("Arial", 18, bold=True)
     clock = pygame.time.Clock()
 
     print("\n" + "=" * 60)
-    print("LIVE ARUCO CALIBRATION & CAMERA SWITCHER (ACTIVE)")
+    print("LIVE ARUCO CALIBRATION & MJPEG CAMERA SWITCHER")
     print("=" * 60)
+    print(f"Primary Source:   {cam_sources[0]}")
+    print(f"Secondary Source: {cam_sources[1]}")
+    print(f"MJPEG FourCC:     {'ENABLED (*MJPG)' if use_mjpeg else 'DISABLED'}")
+    print("-" * 60)
     print("Controls (In Pygame Window):")
-    print("  [c] -> SWITCH CAMERA (Camera 0 <-> Camera 1)")
+    print("  [c] -> SWITCH CAMERA (Toggle Primary <-> Secondary MJPEG Cam)")
     print("  [s] -> SAVE current calibrated crop to disk")
     print("  [r] -> RESET calibration")
     print("  [q] / [ESC] -> QUIT")
@@ -86,7 +119,6 @@ def main():
     last_crop = None
 
     while running:
-        # Handle Pygame Events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -94,21 +126,23 @@ def main():
                 if event.key in [pygame.K_q, pygame.K_ESCAPE]:
                     running = False
                 elif event.key == pygame.K_c:
-                    # Switch Camera 0 <-> Camera 1
-                    next_idx = 1 if cam_idx == 0 else 0
-                    print(f"\n[INFO] Switching to Camera ID {next_idx}...")
+                    # Switch Camera Source
+                    next_src_idx = (current_src_idx + 1) % len(cam_sources)
+                    next_src = cam_sources[next_src_idx]
+                    print(f"\n[INFO] Switching to Camera: '{next_src}'...")
                     cap.release()
-                    new_cap = open_camera(next_idx)
+                    new_cap = open_camera(next_src, force_mjpeg=use_mjpeg)
                     if new_cap.isOpened():
                         cap = new_cap
-                        cam_idx = next_idx
-                        pygame.display.set_caption(f"Dobot ArUco Auto-Calibrator (Camera {cam_idx})")
+                        current_src_idx = next_src_idx
+                        active_src = next_src
+                        pygame.display.set_caption(f"Dobot ArUco Auto-Calibrator (Source: {active_src})")
                         calibrator.is_calibrated = False
                         frame_count = 0
                         t0 = time.time()
                     else:
-                        print(f"[WARN] Failed to open Camera {next_idx}, keeping Camera {cam_idx}")
-                        cap = open_camera(cam_idx)
+                        print(f"[WARN] Failed to open '{next_src}', reverting to '{active_src}'...")
+                        cap = open_camera(active_src, force_mjpeg=use_mjpeg)
                 elif event.key == pygame.K_s:
                     if last_crop is not None:
                         cv2.imwrite("saved_calibrated_obs.png", last_crop)
@@ -151,7 +185,7 @@ def main():
         lbl_status = font.render(status_txt, True, status_col)
         screen.blit(lbl_status, (670, 335))
 
-        lbl_cam = font.render(f"ACTIVE CAMERA: ID {cam_idx} [Press 'c' to switch]", True, (0, 220, 255))
+        lbl_cam = font.render(f"CAMERA: '{active_src}' (MJPEG) [Press 'c' to switch]", True, (0, 220, 255))
         screen.blit(lbl_cam, (670, 365))
 
         lbl_fps = font.render(f"FPS: {fps:.1f}", True, (180, 190, 210))
