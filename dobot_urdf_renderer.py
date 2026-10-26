@@ -123,7 +123,9 @@ class DobotURDFRenderer:
         scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.4, 0.4, 0.4])
 
         # 1. Physical Table Surface
-        # In physical world, table is at Z = 0 (base sitting on table)
+        # In Dobot kinematics, the base height L1 is 0.138m (138mm).
+        # The base rests on the table at Z = 0 in world URDF coordinates.
+        # Robot base bottom is at Z = 0.
         table_mesh = trimesh.creation.box(extents=[0.55, 0.55, 0.015])
         mat_table = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.18, 0.20, 0.25, 1.0], roughnessFactor=0.8)
         table_node = pyrender.Mesh.from_trimesh(trimesh.Trimesh(table_mesh.vertices, table_mesh.faces), material=mat_table, smooth=False)
@@ -141,7 +143,7 @@ class DobotURDFRenderer:
             scene.add(p_meshes[name], pose=transforms[name])
 
         if end_effector == "suction":
-            # Suction Cup: Extends exactly 8.0 cm (0.080 m) down from the EE mounting origin
+            # Suction Cup: Extends exactly 8.0 cm (0.080 m) downwards from end-effector core
             # Stem (cylinder)
             stem = trimesh.creation.cylinder(radius=0.008, height=0.065)
             mat_stem = pyrender.MetallicRoughnessMaterial(baseColorFactor=[0.15, 0.15, 0.17, 1.0], metallicFactor=0.8)
@@ -152,7 +154,6 @@ class DobotURDFRenderer:
             p_cup = pyrender.Mesh.from_trimesh(trimesh.Trimesh(cup.vertices, cup.faces), material=mat_cup, smooth=True)
 
             ee_pose = transforms["ee_world"]
-            # Rotate stem/cup so height is along vertical Z axis downwards
             T_stem = ee_pose @ self.make_transform([0, 0, -0.035], [0, 0, 0])
             T_cup = ee_pose @ self.make_transform([0, 0, -0.0725], [0, 0, 0])
             scene.add(p_stem, pose=T_stem)
