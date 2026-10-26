@@ -1,12 +1,12 @@
 """
 Live camera viewer with on-the-fly camera switching and ArUco auto-calibration:
-- Uses DirectShow (cv2.CAP_DSHOW) on Windows to ensure cameras open instantly without timeout
-- Dual GUI window backend: Pygame (works on all environments including headless/headless opencv) with automatic fallback
-- Supports 8cm x 8cm markers placed side-by-side with 0 space (16cm x 16cm total)
-- Hotkey [c] -> switch camera index (0 <-> 1)
-- Hotkey [s] -> save calibrated frame
-- Hotkey [r] -> reset calibration
-- Hotkey [q] or [ESC] -> quit
+- Direct, instant camera opening for Camera 0 and Camera 1 (no slow/failing index scanning)
+- Uses DirectShow (cv2.CAP_DSHOW) on Windows with safety fallbacks
+- Pygame GUI window showing both camera feed and rectified Octo observation
+- Hotkey [c] -> SWITCH CAMERA (Camera 0 <-> Camera 1)
+- Hotkey [s] -> SAVE current calibrated crop to disk
+- Hotkey [r] -> RESET calibration
+- Hotkey [q] or [ESC] -> QUIT
 """
 import sys
 import time
@@ -17,26 +17,20 @@ import pygame
 
 from aruco_calibrator import ArucoAutoCalibrator
 
-def scan_available_cameras(max_to_test=4):
-    available = []
-    print("[INFO] Scanning for connected video cameras...")
-    for i in range(max_to_test):
-        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-        if cap.isOpened():
-            ret, _ = cap.read()
-            if ret:
-                available.append(i)
-            cap.release()
-    print(f"[INFO] Found available cameras: {available}")
-    return available
-
 def open_camera(cam_idx):
-    # Use CAP_DSHOW on Windows to prevent FFMPEG backend hangs
-    cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
-    if not cap.isOpened():
+    """Safely opens camera with DirectShow backend."""
+    print(f"[INFO] Opening Camera ID: {cam_idx}...")
+    try:
+        cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(cam_idx)
+    except Exception as e:
+        print(f"[WARN] Error with DSHOW, using default backend: {e}")
         cap = cv2.VideoCapture(cam_idx)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+    if cap.isOpened():
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     return cap
 
 def cv2_to_pygame_surface(cv_img):
@@ -46,25 +40,28 @@ def cv2_to_pygame_surface(cv_img):
     return pygame.image.frombuffer(rgb.tobytes(), (w, h), "RGB")
 
 def main():
-    parser = argparse.ArgumentParser(description="Live ArUco Camera with Switching")
-    parser.add_argument("--camera_id", type=int, default=0, help="Initial camera ID (default: 0)")
+    parser = argparse.ArgumentParser(description="Live ArUco Camera with Instant Switching")
+    parser.add_argument("--camera_id", type=int, default=0, help="Initial camera ID: 0 or 1 (default: 0)")
     parser.add_argument("--out_size", type=int, default=256, help="Output crop size for Octo (default: 256)")
     args = parser.parse_args()
 
-    available_cams = scan_available_cameras()
-    if not available_cams:
-        print("[ERROR] No working cameras found on system.")
-        return
+    # Pre-configured available cameras list
+    known_cameras = [0, 1]
+    cam_idx = args.camera_id if args.camera_id in known_cameras else 0
 
-    cam_idx = args.camera_id if args.camera_id in available_cams else available_cams[0]
-    print(f"[INFO] Opening Camera ID: {cam_idx}...")
     cap = open_camera(cam_idx)
+    if not cap.isOpened():
+        print(f"[WARN] Could not open camera {cam_idx}. Trying other camera...")
+        cam_idx = 1 if cam_idx == 0 else 0
+        cap = open_camera(cam_idx)
+        if not cap.isOpened():
+            print("[ERROR] Neither Camera 0 nor Camera 1 could be opened. Please verify USB connection.")
+            return
 
     calibrator = ArucoAutoCalibrator(output_size=(args.out_size, args.out_size), marker_size_mm=80.0)
 
-    # Initialize Pygame GUI
+    # Initialize Pygame GUI window
     pygame.init()
-    # Main window shows: Left side: Raw Camera (640x480), Right side: Calibrated Octo (280x280) + info
     win_w, win_h = 960, 520
     screen = pygame.display.set_mode((win_w, win_h))
     pygame.display.set_caption(f"Dobot ArUco Auto-Calibrator (Camera {cam_idx})")
@@ -73,10 +70,10 @@ def main():
     clock = pygame.time.Clock()
 
     print("\n" + "=" * 60)
-    print("LIVE ARUCO CALIBRATION & MULTI-CAMERA SWITCHER (RUNNING)")
+    print("LIVE ARUCO CALIBRATION & CAMERA SWITCHER (ACTIVE)")
     print("=" * 60)
     print("Controls (In Pygame Window):")
-    print("  [c] -> SWITCH CAMERA (e.g. Camera 0 <-> Camera 1)")
+    print("  [c] -> SWITCH CAMERA (Camera 0 <-> Camera 1)")
     print("  [s] -> SAVE current calibrated crop to disk")
     print("  [r] -> RESET calibration")
     print("  [q] / [ESC] -> QUIT")
@@ -86,6 +83,7 @@ def main():
     frame_count = 0
     t0 = time.time()
     save_notification_timer = 0
+    last_crop = None
 
     while running:
         # Handle Pygame Events
@@ -96,21 +94,23 @@ def main():
                 if event.key in [pygame.K_q, pygame.K_ESCAPE]:
                     running = False
                 elif event.key == pygame.K_c:
-                    if len(available_cams) > 1:
-                        cur_pos = available_cams.index(cam_idx)
-                        next_pos = (cur_pos + 1) % len(available_cams)
-                        cam_idx = available_cams[next_pos]
-                        print(f"\n[INFO] Switching to Camera ID {cam_idx}...")
-                        cap.release()
-                        cap = open_camera(cam_idx)
+                    # Switch Camera 0 <-> Camera 1
+                    next_idx = 1 if cam_idx == 0 else 0
+                    print(f"\n[INFO] Switching to Camera ID {next_idx}...")
+                    cap.release()
+                    new_cap = open_camera(next_idx)
+                    if new_cap.isOpened():
+                        cap = new_cap
+                        cam_idx = next_idx
                         pygame.display.set_caption(f"Dobot ArUco Auto-Calibrator (Camera {cam_idx})")
                         calibrator.is_calibrated = False
                         frame_count = 0
                         t0 = time.time()
                     else:
-                        print("[NOTICE] Only 1 camera detected on system.")
+                        print(f"[WARN] Failed to open Camera {next_idx}, keeping Camera {cam_idx}")
+                        cap = open_camera(cam_idx)
                 elif event.key == pygame.K_s:
-                    if 'last_crop' in locals() and last_crop is not None:
+                    if last_crop is not None:
                         cv2.imwrite("saved_calibrated_obs.png", last_crop)
                         print("[SAVED] Saved frame to 'saved_calibrated_obs.png'!")
                         save_notification_timer = time.time() + 2.0
@@ -119,8 +119,8 @@ def main():
                     print("[INFO] Calibration reset. Re-detecting markers...")
 
         ret, frame = cap.read()
-        if not ret:
-            time.sleep(0.02)
+        if not ret or frame is None:
+            time.sleep(0.01)
             continue
 
         calibrated_crop, debug_view = calibrator.process_frame(frame, auto_calibrate=True)
@@ -129,14 +129,14 @@ def main():
         frame_count += 1
         fps = frame_count / (time.time() - t0 + 1e-5)
 
-        # Draw on Screen
+        # Draw UI
         screen.fill((25, 27, 34))
 
         # 1. Left View: Camera Debug (640x480)
         cam_surf = cv2_to_pygame_surface(debug_view)
         screen.blit(cam_surf, (15, 20))
 
-        # 2. Right View: Calibrated Octo Crop (280x280)
+        # 2. Right View: Calibrated Octo Crop (270x270)
         crop_display = cv2.resize(calibrated_crop, (270, 270))
         crop_surf = cv2_to_pygame_surface(crop_display)
         screen.blit(crop_surf, (670, 20))
