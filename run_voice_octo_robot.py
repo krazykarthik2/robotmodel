@@ -97,6 +97,7 @@ def main():
     parser.add_argument("--camera_id", default="0", help="Initial camera index (0, 1) or MJPEG stream URL (e.g. http://192.168.1.X:8080/video)")
     parser.add_argument("--secondary_cam", default="1", help="Second camera index or MJPEG IP address and path (e.g. http://192.168.1.X:8080/video)")
     parser.add_argument("--workspace_mm", type=float, default=360.0, help="Workspace table span in mm (default: 360mm)")
+    parser.add_argument("--no_mjpeg", action="store_true", help="Disable MJPEG fourcc request")
     args = parser.parse_args()
 
     use_mjpeg = not args.no_mjpeg
