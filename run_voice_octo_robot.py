@@ -143,7 +143,7 @@ def main():
     parser.add_argument("--port", "--com", default=None, help="Dobot COM port (e.g. COM13). If omitted, auto-detects by hardware description.")
     parser.add_argument("--camera_id", default="0", help="Initial camera index (0, 1) or MJPEG stream URL (e.g. http://192.168.1.X:8080/video)")
     parser.add_argument("--secondary_cam", default="1", help="Second camera index or MJPEG IP address and path (e.g. http://192.168.1.X:8080/video)")
-    parser.add_argument("--base_yaw_offset", type=float, default=0.0, help="Base yaw rotation offset in degrees (-90, 0, 90, 180) to align physical Dobot placement with camera (default: 0.0)")
+    parser.add_argument("--auto_home", action="store_true", help="Perform real hardware HOME calibration on startup to automatically calibrate simulation")
     parser.add_argument("--workspace_mm", type=float, default=360.0, help="Workspace table span in mm (default: 360mm)")
     parser.add_argument("--num_chunks", type=int, default=10, help="Number of continuous Octo policy rollout cycles to execute (default: 10)")
     parser.add_argument("--step_gain", type=float, default=15.0, help="Scaling gain from Octo delta to physical mm (default: 15.0)")
@@ -160,19 +160,35 @@ def main():
     dobot = DobotUnifiedDriver(port=args.port, prefer_driver="auto")
     is_connected = dobot.connect()
     
-    if is_connected:
-        print("[INFO] Setting suction OFF and preparing standby pose...")
-        sys.stdout.flush()
+    # Calibration offsets between real hardware and 3D simulation
+    sim_calib_offset = {"yaw": 0.0, "pitch": 0.0, "roll": 0.0}
+
+    def calibrate_sim_to_real_hardware():
+        nonlocal sim_calib_offset, status_text
+        status_text = "HOMING REAL DOBOT TO CALIBRATE SIMULATION..."
+        print("\n" + "=" * 60)
+        print("[AUTO-CALIBRATION] Executing hardware HOME calibration...")
+        print("=" * 60)
+        # 1. Command hardware to physical home
+        home_pose = dobot.home(wait_sec=12.0)
+        print(f"[AUTO-CALIBRATION] Homing complete! Measured Home Pose: {home_pose}")
+        
+        # 2. Check measured base yaw against reference (Home base yaw is 0.0 deg)
+        meas_j1 = float(home_pose.get("j1", 0.0))
+        meas_j2 = float(home_pose.get("j2", 0.0))
+        meas_j3 = float(home_pose.get("j3", 0.0))
+        
+        # Set exact alignment offset so sim matches real home pose zero
+        sim_calib_offset["yaw"] = -meas_j1
+        status_text = f"SIM AUTO-CALIBRATED (Base Offset: {sim_calib_offset['yaw']:+.1f}°)"
+        print(f"[AUTO-CALIBRATION] Simulation aligned with physical Dobot! Base offset: {sim_calib_offset['yaw']:+.1f} deg\n")
+
+        # 3. Move to standby pose
+        dobot.move_to_xyz(200.0, 0.0, 140.0, wait=True)
         dobot.set_suction(False)
-        dobot.set_gripper("off")
-        print("[INFO] Moving arm to standby observation pose (X=200, Y=0, Z=140)...")
-        sys.stdout.flush()
-        dobot.move_to_xyz(200.0, 0.0, 140.0, wait=False)
-        print("[INFO] Standby position commanded successfully.")
-        sys.stdout.flush()
-    else:
-        print("[NOTICE] Real robot not detected or offline. Running in DRY-RUN / SIMULATION mode.")
-        sys.stdout.flush()
+
+    if is_connected and args.auto_home:
+        calibrate_sim_to_real_hardware()
 
     # 2. Open Camera
     print("[INFO] Opening camera feed...")
@@ -379,13 +395,16 @@ def main():
                     calibrator.is_calibrated = False
                     status_text = "CALIBRATION RESET - SHOW 4 MARKERS TO LOCK"
                     print("\n[INFO] Calibration reset! Looking for 4 markers to lock perspective once...")
+                elif event.key == pygame.K_h:
+                    # Press 'h' anytime to run hardware HOME calibration and auto-align simulation
+                    threading.Thread(target=calibrate_sim_to_real_hardware, daemon=True).start()
                 elif event.key == pygame.K_b:
-                    # Live toggle base yaw rotation by 90 degrees: 0 -> 90 -> 180 -> -90 -> 0
-                    args.base_yaw_offset = (args.base_yaw_offset + 90.0) % 360.0
-                    if args.base_yaw_offset > 180.0:
-                        args.base_yaw_offset -= 360.0
-                    status_text = f"SIM BASE YAW ROTATED: {args.base_yaw_offset:+.0f} DEG"
-                    print(f"\n[INFO] Toggled 3D Simulation Base Yaw Offset -> {args.base_yaw_offset:+.0f} deg")
+                    # Toggle 90 degree base yaw rotation manually if desired
+                    sim_calib_offset["yaw"] = (sim_calib_offset["yaw"] + 90.0) % 360.0
+                    if sim_calib_offset["yaw"] > 180.0:
+                        sim_calib_offset["yaw"] -= 360.0
+                    status_text = f"SIM BASE YAW ROTATED: {sim_calib_offset['yaw']:+.0f} DEG"
+                    print(f"\n[INFO] Sim Base Yaw Offset -> {sim_calib_offset['yaw']:+.0f} deg")
 
         ret, frame = cap.read()
         if not ret or frame is None:
@@ -427,8 +446,8 @@ def main():
                     j_calc = dobot_kin.inverse(x_m, y_m, z_m)
                     j1_rad, j2_rad, j3_rad, j4_rad = j_calc[0], j_calc[1], j_calc[2], 0.0
 
-                # Base yaw rotation offset: allows live 90-degree alignment via hotkey 'b' or CLI
-                yaw_offset_rad = np.radians(args.base_yaw_offset)
+                # Apply automatic calibration offset measured from physical homing
+                yaw_offset_rad = np.radians(sim_calib_offset["yaw"])
                 j1_rad = j1_rad + yaw_offset_rad
 
                 # Compute URDF transform hierarchy
@@ -490,7 +509,7 @@ def main():
         screen.blit(lbl_inst, (25, 528))
 
         # Hotkeys help bar
-        help_str = "[v/m] Speak Mic | [t] Text | [SPACE] Run Octo | [c] Cam | [r] Calib | [b] Rotate Base 90° | [q] Quit"
+        help_str = "[v/m] Speak | [t] Text | [SPACE] Run Octo | [h] Auto-Home Calibrate | [b] Base Rot | [q] Quit"
         screen.blit(font.render(help_str, True, (160, 175, 200)), (675, 440))
         screen.blit(font.render(f"STATUS: {status_text}", True, (255, 255, 255)), (15, 502))
 

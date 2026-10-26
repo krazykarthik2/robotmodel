@@ -224,6 +224,31 @@ class DobotUnifiedDriver:
             print(f"[DRY-RUN MOVE] X={x_mm:.1f}mm, Y={y_mm:.1f}mm, Z={z_mm:.1f}mm, R={r_deg:.1f}deg")
             return True
 
+    def home(self, wait_sec=15.0):
+        """Sends the physical robot to its factory HOME calibration position."""
+        if self.mode == "pydobot" and self.device:
+            print("[INFO] Sending hardware HOME calibration command (id=31)...")
+            msg = Message()
+            msg.id = 31 # SetHOMECmd
+            msg.ctrl = 0x03 # Queued
+            msg.params = bytearray() # ZERO BYTES
+            self.device._send_command(msg)
+            if wait_sec > 0:
+                print(f"[INFO] Waiting {wait_sec:.0f}s for physical homing cycle to finish...")
+                time.sleep(wait_sec)
+                # Re-clear alarms and resume queue
+                self._init_pydobot_queue_and_alarms(self.device)
+            return self.get_pose()
+        elif self.mode == "dll" and self.api:
+            print("[INFO] Sending DobotDll SetHOMECmd...")
+            dType.SetHOMECmd(self.api, temp=0, isQueued=0)
+            if wait_sec > 0:
+                time.sleep(wait_sec)
+            return self.get_pose()
+        else:
+            print("[DRY-RUN HOME] Calibrated to default home pose (200, 0, 140)")
+            return self.get_pose()
+
     def set_suction(self, enable=False):
         """Explicitly enables or disables suction pump."""
         if self.mode == "pydobot" and self.device:
