@@ -19,6 +19,8 @@ import pygame
 from dobot_unified_driver import DobotUnifiedDriver
 from aruco_calibrator import ArucoAutoCalibrator
 from voice_instruction import listen_for_instruction
+from dobot_urdf_renderer import DobotURDFRenderer
+from dobot_magician_ros2.ai_training.env.dobot_env import DobotKinematics
 
 # Octo Policy
 import octo_patch
@@ -158,12 +160,20 @@ def main():
     unnorm_stats = model.dataset_statistics["bridge_dataset"]["action"]
     print("[SUCCESS] Octo Model loaded and ready for instructions!")
 
-    # 5. Initialize Pygame Dashboard
+    # 5. Initialize 3D URDF Simulation Renderer
+    print("\n" + "=" * 60)
+    print("STEP 3: INITIALIZING 3D URDF DIGITAL TWIN SIMULATION")
+    print("=" * 60)
+    sim_renderer = DobotURDFRenderer(width=480, height=360)
+    dobot_kin = DobotKinematics()
+    sim_enabled = True
+
+    # 6. Initialize Pygame Unified Dashboard
     pygame.init()
-    # Left: 640x480 (Raw Camera), Right: 300x300 (Calibrated Octo) + UI panels
-    win_w, win_h = 1020, 560
+    # Left: 640x480 (Raw Camera), Center: 320x320 (Calibrated Octo POV), Right: 480x360 (3D URDF Sim)
+    win_w, win_h = 1480, 580
     screen = pygame.display.set_mode((win_w, win_h))
-    pygame.display.set_caption("OCTO ROBOT CONTROL: Live Calibrated POV & Voice Interface")
+    pygame.display.set_caption("OCTO ROBOT CONTROL: Live POV, 3D URDF Digital Twin & Voice Interface")
     font = pygame.font.SysFont("Arial", 16)
     font_bold = pygame.font.SysFont("Arial", 18, bold=True)
     clock = pygame.time.Clock()
@@ -172,6 +182,9 @@ def main():
     status_text = "READY - WAITING FOR COMMAND"
     is_executing = False
     last_crop = None
+    gripper_state = False
+    last_sim_frame = np.full((360, 480, 3), 20, dtype=np.uint8)
+    sim_update_counter = 0
 
     print("\n" + "=" * 60)
     print("SYSTEM READY: HOW TO GIVE INSTRUCTIONS")
@@ -200,7 +213,7 @@ def main():
             status_text = "MIC TIMEOUT (NO SPEECH DETECTED)"
 
     def execute_octo_on_robot():
-        nonlocal is_executing, status_text
+        nonlocal is_executing, status_text, gripper_state
         if last_crop is None:
             return
         is_executing = True
@@ -265,8 +278,10 @@ def main():
 
                 if grip_val > 0.5:
                     dobot.set_gripper("close")
+                    gripper_state = True
                 else:
                     dobot.set_gripper("open")
+                    gripper_state = False
 
                 cur_pose = dobot.get_pose()
 
@@ -321,7 +336,23 @@ def main():
         calibrated_crop, debug_view = calibrator.process_frame(frame, auto_calibrate=not calibrator.is_calibrated)
         last_crop = calibrated_crop
 
-        # 2. Guarantee debug camera feed fits strictly inside 640x480 box
+        # 2. Render Synchronized 3D URDF Digital Twin Simulation
+        sim_update_counter += 1
+        if sim_update_counter % 2 == 0: # 15 FPS simulation sync
+            try:
+                cur_p = dobot.get_pose()
+                x_m, y_m, z_m = cur_p['x'] / 1000.0, cur_p['y'] / 1000.0, cur_p['z'] / 1000.0
+                j_calc = dobot_kin.inverse(x_m, y_m, z_m)
+                t_m = sim_renderer.compute_urdf_transforms(j_calc[0], j_calc[1], j_calc[2], 0.0, gripper_closed=gripper_state)
+                # Table workspace matching real table
+                scene = sim_renderer.build_scene(t_m,
+                    cube_pos=[0.20, 0.05, 0.012], cube_color_rgb=[0.9, 0.2, 0.2],
+                    plat_pos=[0.22, -0.08, 0.003], plat_color_rgb=[0.2, 0.8, 0.3])
+                _, _, last_sim_frame = sim_renderer.render_views(scene, t_m['ee_pos'])
+            except Exception:
+                pass
+
+        # 3. Guarantee debug camera feed fits strictly inside 640x480 box
         camera_640x480 = fit_to_640x480(debug_view)
 
         frame_count += 1
@@ -330,42 +361,53 @@ def main():
         # Pygame Rendering
         screen.fill((18, 20, 26))
 
-        # Left View: Standardized 640x480 Viewport
+        # Panel 1 (Left): Standardized 640x480 Raw Viewport
         cam_surf = cv2_to_pygame_surface(camera_640x480)
         screen.blit(cam_surf, (15, 20))
         pygame.draw.rect(screen, (60, 65, 80), (14, 19, 642, 482), 1)
 
-        # Right View: Calibrated Octo POV (shown as 320x320)
-        crop_display = cv2.resize(calibrated_crop, (320, 320))
+        # Panel 2 (Center): Calibrated Octo POV (300x300)
+        crop_display = cv2.resize(calibrated_crop, (300, 300))
         crop_surf = cv2_to_pygame_surface(crop_display)
         screen.blit(crop_surf, (675, 20))
-        pygame.draw.rect(screen, (0, 240, 180), (674, 19, 322, 322), 2)
+        pygame.draw.rect(screen, (0, 240, 180), (674, 19, 302, 302), 2)
 
-        # Overlays & Telemetry
-        lbl_octo = font_bold.render("OCTO CALIBRATED POV (256x256)", True, (0, 240, 180))
-        screen.blit(lbl_octo, (675, 350))
+        lbl_octo = font_bold.render("OCTO POV (360x360mm Table)", True, (0, 240, 180))
+        screen.blit(lbl_octo, (675, 330))
 
-        cal_status = "ARUCO: CALIBRATED (16x16cm Rectified)" if calibrator.is_calibrated else "ARUCO: DETECTING 4 MARKERS..."
+        cal_status = "ARUCO: LOCKED (Table Calibrated)" if calibrator.is_calibrated else "ARUCO: WAITING 4 MARKERS..."
         cal_col = (50, 255, 120) if calibrator.is_calibrated else (255, 90, 90)
-        screen.blit(font.render(cal_status, True, cal_col), (675, 375))
+        screen.blit(font.render(cal_status, True, cal_col), (675, 355))
 
         rob_status = f"ROBOT: {'CONNECTED (LIVE HARDWARE)' if dobot.connected else 'SIMULATION / DRY-RUN'}"
         rob_col = (0, 220, 255) if dobot.connected else (255, 200, 80)
-        screen.blit(font.render(rob_status, True, rob_col), (675, 400))
+        screen.blit(font.render(rob_status, True, rob_col), (675, 380))
+
+        # Panel 3 (Right): 3D URDF Digital Twin Simulation (480x360)
+        sim_surf = cv2_to_pygame_surface(last_sim_frame)
+        screen.blit(sim_surf, (990, 20))
+        pygame.draw.rect(screen, (70, 130, 255), (989, 19, 482, 362), 2)
+        lbl_sim = font_bold.render("3D URDF DIGITAL TWIN (SYNCHRONIZED)", True, (70, 130, 255))
+        screen.blit(lbl_sim, (990, 390))
+
+        cur_p = dobot.get_pose()
+        telemetry_str = f"EE: X={cur_p['x']:.1f} Y={cur_p['y']:.1f} Z={cur_p['z']:.1f}mm | Grip: {'CLOSED' if gripper_state else 'OPEN'}"
+        screen.blit(font.render(telemetry_str, True, (200, 215, 240)), (990, 415))
 
         # Bottom Bar: Task Instruction & Status
-        pygame.draw.rect(screen, (28, 32, 42), (15, 510, 985, 40), border_radius=4)
+        pygame.draw.rect(screen, (28, 32, 42), (15, 515, 1450, 45), border_radius=4)
         lbl_inst = font_bold.render(f"TASK: \"{current_instruction}\"", True, (255, 215, 0))
-        screen.blit(lbl_inst, (25, 520))
+        screen.blit(lbl_inst, (25, 528))
 
         # Hotkeys help bar
-        help_str = "[v/m] Speak Mic  |  [t] Type Text  |  [SPACE] Run Octo  |  [c] Switch Cam  |  [q] Quit"
+        help_str = "[v/m] Speak Mic  |  [t] Type Text  |  [SPACE] Run Octo  |  [c] Switch Cam  |  [r] Recalibrate  |  [q] Quit"
         screen.blit(font.render(help_str, True, (160, 175, 200)), (675, 440))
         screen.blit(font.render(f"STATUS: {status_text}", True, (255, 255, 255)), (15, 502))
 
         pygame.display.flip()
         clock.tick(30)
 
+    sim_renderer.close()
     cap.release()
     dobot.close()
     pygame.quit()
