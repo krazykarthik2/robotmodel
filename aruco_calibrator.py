@@ -38,49 +38,50 @@ class ArucoAutoCalibrator:
         self.ws_w_mm = 360.0
         self.ws_h_mm = 360.0
 
-        # Physical layout: ArUco markers are placed directly in front of the Dobot base with NO gap!
-        # Dobot base extends ~80mm from origin (0, 0).
-        # The 2x2 contiguous cluster of 80mm markers starts immediately at X = 80mm.
-        # Cluster spans from X = 80mm to X = 240mm (Center at X = 160mm).
-        # Lateral span from Y = -80mm to Y = +80mm (Center at Y = 0mm).
-        # In a 360mm x 360mm workspace view [X: 40mm to 400mm, Y: -180mm to +180mm]:
-        # Center of cluster is at 160mm along X, 0mm along Y.
-        # Top row (closest to Dobot base, X = 80 + 40 = 120 mm):
-        # - ID 0: Top-Left (X = 120mm, Y = +40mm)
-        # - ID 1: Top-Right (X = 120mm, Y = -40mm)
-        # Bottom row (further from Dobot base, X = 120 + 80 = 200 mm):
-        # - ID 3: Bottom-Left (X = 200mm, Y = +40mm)
-        # - ID 2: Bottom-Right (X = 200mm, Y = -40mm)
+        # Canonical Physical-to-Image Coordinate Frame:
+        # In Bridge V2 dataset (Octo's trained coordinate frame):
+        # - Image Horizontal (columns 0 to W-1): Robot Left (+Y) to Robot Right (-Y)
+        # - Image Vertical (rows 0 to H-1): Far Forward (+X) down to Near Base (-X)
+        #
+        # Physical workspace bounds centered in front of Dobot:
+        # X: [0.040 m, 0.400 m] (span = 0.360 m) -> Dobot base front is at X = 0.080 m
+        # Y: [-0.180 m, +0.180 m] (span = 0.360 m) -> Center is Y = 0.000 m
+        #
+        # 4 Markers (80mm x 80mm) placed touching each other right in front of the Dobot base:
+        # - Row 1 (touching base): X = 80mm + 40mm = 120 mm
+        # - Row 2 (forward in scene): X = 120mm + 80mm = 200 mm
+        # - Left column: Y = +40 mm
+        # - Right column: Y = -40 mm
+        #
+        # Marker IDs placed as:
+        # ID 0 (near base, Left)    | ID 1 (near base, Right)
+        # --------------------------+--------------------------
+        # ID 3 (forward, Left)      | ID 2 (forward, Right)
 
         w, h = output_size
-        cx_px = w / 2.0
-        # In camera frame, top is Dobot base (X=40mm), bottom is front (X=400mm):
-        # Marker center X=120mm is at (120 - 40) / 360 = 22.2% from top
-        # Marker center X=200mm is at (200 - 40) / 360 = 44.4% from top
-        # Marker center Y=-40mm is at (180 - 40) / 360 = 38.9% from left
-        # Marker center Y=+40mm is at (180 + 40) / 360 = 61.1% from left
-        scale_x = w / self.ws_w_mm
-        scale_y = h / self.ws_h_mm
+        ws_span_x = 360.0 # mm
+        ws_span_y = 360.0 # mm
+        x_max_mm = 400.0  # mm (far edge of table view)
+        y_max_mm = 180.0  # mm (left edge of table view)
 
-        # Destination pixel coordinates mapping the 4 marker centers touching the base:
-        y_top_px = (120.0 - 40.0) * scale_y
-        y_bot_px = (200.0 - 40.0) * scale_y
-        x_left_px = (180.0 - 40.0) * scale_x
-        x_rght_px = (180.0 + 40.0) * scale_x
+        def to_pixel(x_phys, y_phys):
+            u = (y_max_mm - y_phys) / ws_span_y * (w - 1)
+            v = (x_max_mm - x_phys) / ws_span_x * (h - 1)
+            return [u, v]
 
         self.dst_center_pts = np.array([
-            [x_left_px, y_top_px], # ID 0: Top-Left (touching base, left)
-            [x_rght_px, y_top_px], # ID 1: Top-Right (touching base, right)
-            [x_rght_px, y_bot_px], # ID 2: Bottom-Right (forward, right)
-            [x_left_px, y_bot_px]  # ID 3: Bottom-Left (forward, left)
+            to_pixel(120.0, +40.0), # ID 0: Touching base, Robot Left
+            to_pixel(120.0, -40.0), # ID 1: Touching base, Robot Right
+            to_pixel(200.0, -40.0), # ID 2: Forward, Robot Right
+            to_pixel(200.0, +40.0)  # ID 3: Forward, Robot Left
         ], dtype=np.float32)
 
-        # Full table workspace outer corners
+        # Full table workspace outer corners (u, v)
         self.dst_outer_corners = np.array([
-            [0, 0],         # Top-Left
-            [w - 1, 0],     # Top-Right
-            [w - 1, h - 1], # Bottom-Right
-            [0, h - 1]      # Bottom-Left
+            [0, 0],         # Top-Left (Far-Left)
+            [w - 1, 0],     # Top-Right (Far-Right)
+            [w - 1, h - 1], # Bottom-Right (Near-Right)
+            [0, h - 1]      # Bottom-Left (Near-Left)
         ], dtype=np.float32)
 
         self.homography_matrix = None
