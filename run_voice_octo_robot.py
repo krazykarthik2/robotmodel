@@ -75,7 +75,7 @@ def open_camera(cam_src, force_mjpeg=True):
 
 def main():
     parser = argparse.ArgumentParser(description="Voice & Text Controlled Octo Robot System")
-    parser.add_argument("--port", "--com", default="COM13", help="Dobot COM port (e.g. COM13)")
+    parser.add_argument("--port", "--com", default=None, help="Dobot COM port (e.g. COM13). If omitted, auto-detects by hardware description.")
     parser.add_argument("--camera_id", default="0", help="Camera index (0, 1) or stream URL")
     parser.add_argument("--secondary_cam", default="1", help="Second camera index")
     args = parser.parse_args()

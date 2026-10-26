@@ -44,11 +44,40 @@ class DobotUnifiedDriver:
 
     def connect(self):
         """Attempts connection using pydobot first (most reliable direct USB protocol), then DLL."""
-        # Detect active ports
-        available_ports = [p.device for p in list_ports.comports()]
-        print(f"[INFO] Available serial ports on system: {available_ports}")
+        # Detect active ports and rank them by hardware description
+        all_ports = list(list_ports.comports())
+        print(f"[INFO] Detected system serial ports:")
+        for p in all_ports:
+            print(f"       -> {p.device}: {p.description}")
 
-        target_ports = [self.port] if self.port else available_ports
+        # Dobot/USB-to-Serial chips (CH9102, CH340, FTDI, CP210x, Dobot, Prolific)
+        priority_keywords = ["ch9102", "ch340", "ch341", "usb-enhanced-serial", "cp210", "ftdi", "dobot", "usb-serial", "usb serial"]
+        
+        priority_ports = []
+        regular_ports = []
+        bluetooth_ports = []
+
+        for p in all_ports:
+            desc_lower = (p.description or "").lower()
+            hwid_lower = (p.hwid or "").lower()
+            
+            if any(k in desc_lower or k in hwid_lower for k in priority_keywords):
+                priority_ports.append(p.device)
+            elif "bluetooth" in desc_lower:
+                # Bluetooth serial ports often freeze on Windows when opening, put them last
+                bluetooth_ports.append(p.device)
+            else:
+                regular_ports.append(p.device)
+
+        sorted_ports = priority_ports + regular_ports + bluetooth_ports
+
+        if self.port:
+            # If explicit port passed, check it first, followed by others as fallback
+            target_ports = [self.port] + [p for p in sorted_ports if p != self.port]
+        else:
+            target_ports = sorted_ports
+
+        print(f"[INFO] Prioritized port search order: {target_ports}")
 
         # 1. Try PyDobot Native Serial Protocol (proven in working_python_version.py)
         if HAS_PYDOBOT and self.prefer_driver in ["auto", "pydobot"]:
