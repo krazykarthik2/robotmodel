@@ -75,6 +75,7 @@ def open_camera(cam_src, force_mjpeg=True):
 
 def main():
     parser = argparse.ArgumentParser(description="Voice & Text Controlled Octo Robot System")
+    parser.add_argument("--port", "--com", default="COM13", help="Dobot COM port (e.g. COM13)")
     parser.add_argument("--camera_id", default="0", help="Camera index (0, 1) or stream URL")
     parser.add_argument("--secondary_cam", default="1", help="Second camera index")
     args = parser.parse_args()
@@ -83,7 +84,7 @@ def main():
     print("\n" + "=" * 60)
     print("STEP 1: CONNECTING & INITIALIZING REAL DOBOT ROBOT")
     print("=" * 60)
-    dobot = DobotUnifiedDriver(prefer_driver="auto")
+    dobot = DobotUnifiedDriver(port=args.port, prefer_driver="auto")
     is_connected = dobot.connect()
     
     if is_connected:
