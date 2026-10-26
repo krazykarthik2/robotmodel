@@ -325,19 +325,16 @@ def main():
                     break
                 status_text = f"EXECUTING STEP {s_idx}/4 (CHUNK {chunk_idx}/{total_chunks})..."
                 
-                # Octo actions are normalized deltas in meters.
-                # Scaling gain translates them into physical millimetres on Dobot's workspace
-                dx_raw = act[0] * 1000.0 * args.step_gain
-                dy_raw = act[1] * 1000.0 * args.step_gain
-                dz_raw = act[2] * 1000.0 * args.step_gain
+                # Canonical Octo to Dobot Coordinate Mapping (Pre-configured & Verified):
+                # Bridge Dataset standard:
+                # - Act[0] (forward/backward): maps directly to Dobot +X (forward away from base)
+                # - Act[1] (lateral left/right): maps directly to Dobot +Y (left/right)
+                # - Act[2] (height vertical): in Bridge, descending to grasp is negative (-dZ).
+                #   Dobot height Z decreases when approaching table surface.
+                dx_mm = act[0] * 1000.0 * args.step_gain
+                dy_mm = act[1] * 1000.0 * args.step_gain
+                dz_mm = act[2] * 1000.0 * args.step_gain
                 grip_val = act[6]
-
-                if args.swap_xy:
-                    dx_raw, dy_raw = dy_raw, dx_raw
-                
-                dx_mm = dx_raw
-                dy_mm = -dy_raw if args.invert_y else dy_raw
-                dz_mm = -dz_raw if args.invert_z else dz_raw
 
                 raw_tx = cur_pose['x'] + dx_mm
                 raw_ty = cur_pose['y'] + dy_mm
@@ -530,7 +527,7 @@ def main():
         screen.blit(lbl_inst, (25, 528))
 
         # Hotkeys help bar
-        help_str = "[SPACE] Run | [v/m] Voice | [h] Home | [y] Invert Y | [z] Invert Z | [x] Swap XY | [q] Quit"
+        help_str = "[SPACE] Run Octo | [v/m] Voice Mic | [t] Type Text | [h] Auto-Home Calibrate | [c] Switch Cam | [q] Quit"
         screen.blit(font.render(help_str, True, (160, 175, 200)), (675, 440))
         screen.blit(font.render(f"STATUS: {status_text}", True, (255, 255, 255)), (15, 502))
 
