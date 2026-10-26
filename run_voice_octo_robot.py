@@ -132,42 +132,80 @@ def fit_to_640x480(frame):
     canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized
     return canvas
 
+class ZeroLagCamera:
+    """
+    Zero-Latency Camera Stream Handler:
+    Solves OpenCV's internal network/hardware frame buffer backlog.
+    When reading from network streams (e.g. http://192.168.x.x:8080/videofeed),
+    OpenCV queues up hundreds of unread frames, resulting in 10-20+ seconds of lag!
+    ZeroLagCamera runs a dedicated high-priority daemon thread that continuously
+    discards stale frames and always delivers the absolute freshest, real-time frame instantly.
+    """
+    def __init__(self, cam_src, force_mjpeg=True):
+        self.src = cam_src
+        self.is_url = isinstance(cam_src, str) and (cam_src.startswith("http://") or cam_src.startswith("https://") or cam_src.startswith("rtsp://") or ".mjpg" in cam_src)
+        
+        if self.is_url:
+            self.cap = cv2.VideoCapture(cam_src)
+            try:
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+        else:
+            idx = int(cam_src) if isinstance(cam_src, (int, str)) and str(cam_src).isdigit() else 0
+            self.cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(idx)
+            if self.cap.isOpened():
+                if force_mjpeg:
+                    self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*'MJPG'))
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        self.lock = threading.Lock()
+        self.frame = None
+        self.ret = False
+        self.running = True
+        
+        if self.cap.isOpened():
+            # Prime first frame synchronously
+            self.ret, self.frame = self.cap.read()
+            self.thread = threading.Thread(target=self._capture_worker, daemon=True)
+            self.thread.start()
+
+    def _capture_worker(self):
+        while self.running and self.cap.isOpened():
+            # Grab grabs frame immediately from buffer
+            grabbed = self.cap.grab()
+            if not grabbed:
+                time.sleep(0.005)
+                continue
+            ret, frame = self.cap.retrieve()
+            if ret and frame is not None:
+                with self.lock:
+                    self.ret = ret
+                    self.frame = frame
+
+    def read(self):
+        with self.lock:
+            if self.frame is not None:
+                return self.ret, self.frame.copy()
+            return False, None
+
+    def isOpened(self):
+        return self.cap.isOpened()
+
+    def release(self):
+        self.running = False
+        if hasattr(self, 'thread') and self.thread.is_alive():
+            time.sleep(0.02)
+        self.cap.release()
+
 def open_camera(cam_src, force_mjpeg=True):
-    """
-    Opens camera device (index int or stream URL str) with MJPEG fourcc support:
-    - Supports full IP stream URLs: e.g. http://192.168.1.50:8080/video or http://192.168.x.x:4747/mjpegfeed
-    - Supports hardware indexes (0, 1, ...) with MJPEG FourCC requested
-    """
-    print(f"[INFO] Opening Camera source '{cam_src}' (force_mjpeg={force_mjpeg})...")
+    print(f"[INFO] Opening Camera source '{cam_src}' with ZeroLag pipeline...")
     sys.stdout.flush()
-
-    # Network / IP stream URL (e.g. IP Webcam, DroidCam, ESP32-CAM, RTSP)
-    if isinstance(cam_src, str) and (cam_src.startswith("http://") or cam_src.startswith("https://") or cam_src.startswith("rtsp://") or ".mjpg" in cam_src):
-        cap = cv2.VideoCapture(cam_src)
-        return cap
-
-    # Hardware camera index
-    idx = int(cam_src) if isinstance(cam_src, (int, str)) and str(cam_src).isdigit() else 0
-    cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(idx)
-
-    if cap.isOpened():
-        if force_mjpeg:
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*'MJPG'))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-        # Quick test read
-        ret, _ = cap.read()
-        if not ret:
-            # Fallback if specific hardware doesn't support MJPG fourcc request
-            cap.release()
-            cap = cv2.VideoCapture(idx)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-    return cap
+    return ZeroLagCamera(cam_src, force_mjpeg=force_mjpeg)
 
 def main():
     parser = argparse.ArgumentParser(description="Voice & Text Controlled Octo Robot System")
