@@ -123,7 +123,8 @@ class DobotURDFRenderer:
     def build_scene(self, transforms, cube_pos=None, cube_color_rgb=None, plat_pos=None, plat_color_rgb=None,
                     distractor_cubes=None, distractor_plats=None, end_effector="suction",
                     table_texture=None, workspace_size_m=0.36):
-        scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.45, 0.45, 0.45])
+        # Vivid ambient light so table projection and robot geometry are crisp and bright
+        scene = pyrender.Scene(bg_color=[0.08, 0.09, 0.12, 1.0], ambient_light=[0.72, 0.72, 0.72])
 
         # 1. Physical Table Surface
         # Ground-truth table plane from physical Dobot measurement:
@@ -139,16 +140,16 @@ class DobotURDFRenderer:
         # Project Live Calibrated Camera POV directly onto the workspace table surface
         if table_texture is not None:
             try:
-                # Downsample table_texture to 48x48 vertex color grid (smooth, ultra-fast, 100% native OpenGL compatible)
-                grid_size = 48
+                # 64x64 vertex color grid for high resolution, vibrant real-time rendering
+                grid_size = 64
                 tex_rgb = cv2.cvtColor(table_texture, cv2.COLOR_BGR2RGB) if len(table_texture.shape) == 3 else table_texture
                 sampled = cv2.resize(tex_rgb, (grid_size, grid_size), interpolation=cv2.INTER_AREA)
 
                 # Physical table mapping matching camera perspective:
-                # - Screen Left (u=0) is Robot Right (-Y)
-                # - Screen Right (u=w-1) is Robot Left (+Y)
-                # - Screen Top (v=0) is near Dobot base (+X=80mm)
-                # - Screen Bottom (v=h-1) is far table edge (+X=360mm)
+                # - Screen Left (u=0) is Robot Right (-Y = -140mm)
+                # - Screen Right (u=w-1) is Robot Left (+Y = +140mm)
+                # - Screen Top (v=0) is near Dobot base (+X = 80mm)
+                # - Screen Bottom (v=h-1) is far table edge (+X = 360mm)
                 # Local table mesh is centered at X = 0.220 m (220 mm), span = 0.280 m (-0.140 to +0.140 m)
                 half_s = 0.140 # 140 mm
                 xs = np.linspace(-half_s, half_s, grid_size) # from base (-half_s -> X=80mm) to forward (+half_s -> X=360mm)
@@ -161,16 +162,17 @@ class DobotURDFRenderer:
                 colors[:, :3] = sampled.reshape(-1, 3)
                 colors[:, 3] = 255
 
+                # Construct faces with normals pointing strictly UPWARDS (+Z) towards camera and lights
                 faces = []
                 for i in range(grid_size - 1):
                     for j in range(grid_size - 1):
                         idx = i * grid_size + j
-                        faces.append([idx, idx + 1, idx + grid_size])
-                        faces.append([idx + 1, idx + grid_size + 1, idx + grid_size])
+                        faces.append([idx, idx + grid_size, idx + 1])
+                        faces.append([idx + 1, idx + grid_size, idx + grid_size + 1])
                 faces = np.array(faces, dtype=np.int32)
 
                 proj_mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_colors=colors)
-                p_proj_node = pyrender.Mesh.from_trimesh(proj_mesh, smooth=True)
+                p_proj_node = pyrender.Mesh.from_trimesh(proj_mesh, smooth=False)
                 scene.add(p_proj_node, pose=self.make_transform([0.22, 0.0, table_top_z + 0.001], [0, 0, 0]))
             except Exception as e:
                 border = trimesh.creation.box(extents=[0.52, 0.52, 0.002])
@@ -234,10 +236,10 @@ class DobotURDFRenderer:
         - Third-person camera: 640x480
         """
         # --- 1. Third Person View (640x480) ---
-        # Position camera in front of the robot looking towards base (matching real camera perspective)
-        cam_tp = pyrender.PerspectiveCamera(yfov=np.radians(46.0))
-        eye_tp = np.array([0.52, 0.18, 0.32]) # Elevated front-quarter perspective
-        tgt_tp = np.array([0.18, 0.0, 0.05])
+        # Elevated front-quarter perspective framing the entire Dobot (upright or moving) AND the full workspace table
+        cam_tp = pyrender.PerspectiveCamera(yfov=np.radians(52.0))
+        eye_tp = np.array([0.62, 0.25, 0.36])
+        tgt_tp = np.array([0.18, 0.0, -0.02])
         up_tp = np.array([0, 0, 1])
         fwd_tp = (tgt_tp - eye_tp) / np.linalg.norm(tgt_tp - eye_tp)
         rgt_tp = np.cross(fwd_tp, up_tp) / np.linalg.norm(np.cross(fwd_tp, up_tp))
@@ -248,7 +250,7 @@ class DobotURDFRenderer:
         T_tp[:3, 3] = eye_tp
 
         cam_tp_node = scene.add(cam_tp, pose=T_tp)
-        light_tp_node = scene.add(pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=4.0), pose=T_tp)
+        light_tp_node = scene.add(pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=3.5), pose=T_tp)
 
         img_tp, _ = self.r.render(scene)
         scene.remove_node(cam_tp_node)
