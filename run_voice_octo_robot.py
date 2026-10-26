@@ -21,6 +21,32 @@ from aruco_calibrator import ArucoAutoCalibrator
 from voice_instruction import listen_for_instruction
 from dobot_urdf_renderer import DobotURDFRenderer
 from dobot_magician_ros2.ai_training.env.dobot_env import DobotKinematics
+import json
+
+CONFIG_FILE = "calibration_config.json"
+
+def load_calibration_config():
+    cfg = {
+        "sim_yaw_offset_deg": 0.0,
+        "sim_pitch_offset_deg": 0.0,
+        "sim_roll_offset_deg": 0.0,
+        "x_scale": 1.0,
+        "y_scale": 1.0,
+        "z_scale": 1.0,
+        "z_table_surface_mm": -35.0,
+        "standby_x_mm": 200.0,
+        "standby_y_mm": 0.0,
+        "standby_z_mm": 140.0
+    }
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                saved = json.load(f)
+                cfg.update(saved)
+                print(f"[INFO] Loaded manual calibration config from '{CONFIG_FILE}': Base Yaw Offset={cfg['sim_yaw_offset_deg']}°")
+        except Exception:
+            pass
+    return cfg
 
 # Octo Policy
 import octo_patch
@@ -164,7 +190,8 @@ def main():
     is_connected = dobot.connect()
     
     # Calibration offsets between real hardware and 3D simulation
-    sim_calib_offset = {"yaw": 0.0, "pitch": 0.0, "roll": 0.0}
+    calib_cfg = load_calibration_config()
+    sim_calib_offset = {"yaw": calib_cfg.get("sim_yaw_offset_deg", 0.0), "pitch": 0.0, "roll": 0.0}
 
     def calibrate_sim_to_real_hardware():
         nonlocal sim_calib_offset, status_text
