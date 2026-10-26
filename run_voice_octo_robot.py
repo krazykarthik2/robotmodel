@@ -270,9 +270,12 @@ def main():
                 cur_pose = {"x": target_x, "y": target_y, "z": target_z}
                 time.sleep(0.15)
 
-        status_text = "TASK ROLLOUT FINISHED!"
+        # Explicitly stop suction and release gripper after task rollout finishes
+        dobot.set_suction(False)
+        dobot.set_gripper("off")
+        status_text = "TASK ROLLOUT FINISHED! (SUCTION STOPPED)"
         is_executing = False
-        print(f"\n[SUCCESS] Completed {total_chunks} policy rollout cycles.\n")
+        print(f"\n[SUCCESS] Completed {total_chunks} policy rollout cycles. Suction stopped.\n")
 
     while running:
         for event in pygame.event.get():
