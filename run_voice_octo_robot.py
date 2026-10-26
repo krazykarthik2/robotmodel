@@ -54,23 +54,52 @@ def fit_to_640x480(frame):
     canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized
     return canvas
 
-def open_camera(cam_src):
-    if isinstance(cam_src, str) and (cam_src.startswith("http://") or cam_src.startswith("rtsp://")):
-        return cv2.VideoCapture(cam_src)
-    idx = int(cam_src) if str(cam_src).isdigit() else 0
-    # Try standard open first (fastest and most reliable across USB webcams)
-    cap = cv2.VideoCapture(idx)
-    if not cap.isOpened() or not cap.read()[0]:
-        cap.release()
-        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+def open_camera(cam_src, force_mjpeg=True):
+    """
+    Opens camera device (index int or stream URL str) with MJPEG fourcc support:
+    - Supports full IP stream URLs: e.g. http://192.168.1.50:8080/video or http://192.168.x.x:4747/mjpegfeed
+    - Supports hardware indexes (0, 1, ...) with MJPEG FourCC requested
+    """
+    print(f"[INFO] Opening Camera source '{cam_src}' (force_mjpeg={force_mjpeg})...")
+    sys.stdout.flush()
+
+    # Network / IP stream URL (e.g. IP Webcam, DroidCam, ESP32-CAM, RTSP)
+    if isinstance(cam_src, str) and (cam_src.startswith("http://") or cam_src.startswith("https://") or cam_src.startswith("rtsp://") or ".mjpg" in cam_src):
+        cap = cv2.VideoCapture(cam_src)
+        return cap
+
+    # Hardware camera index
+    idx = int(cam_src) if isinstance(cam_src, (int, str)) and str(cam_src).isdigit() else 0
+    cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(idx)
+
+    if cap.isOpened():
+        if force_mjpeg:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*'MJPG'))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+        # Quick test read
+        ret, _ = cap.read()
+        if not ret:
+            # Fallback if specific hardware doesn't support MJPG fourcc request
+            cap.release()
+            cap = cv2.VideoCapture(idx)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
     return cap
 
 def main():
     parser = argparse.ArgumentParser(description="Voice & Text Controlled Octo Robot System")
     parser.add_argument("--port", "--com", default=None, help="Dobot COM port (e.g. COM13). If omitted, auto-detects by hardware description.")
-    parser.add_argument("--camera_id", default="0", help="Camera index (0, 1) or stream URL")
-    parser.add_argument("--secondary_cam", default="1", help="Second camera index")
+    parser.add_argument("--camera_id", default="0", help="Initial camera index (0, 1) or MJPEG stream URL (e.g. http://192.168.1.X:8080/video)")
+    parser.add_argument("--secondary_cam", default="1", help="Second camera index or MJPEG IP address and path (e.g. http://192.168.1.X:8080/video)")
+    parser.add_argument("--no_mjpeg", action="store_true", help="Disable MJPEG fourcc request")
     args = parser.parse_args()
+
+    use_mjpeg = not args.no_mjpeg
 
     # 1. Connect Real Dobot Hardware
     print("\n" + "=" * 60)
@@ -100,11 +129,12 @@ def main():
     cam_sources = [args.camera_id, args.secondary_cam]
     src_idx = 0
     active_src = cam_sources[src_idx]
-    cap = open_camera(active_src)
+    cap = open_camera(active_src, force_mjpeg=use_mjpeg)
     if not cap.isOpened():
+        print(f"[WARN] Could not open camera '{active_src}'. Trying secondary camera '{cam_sources[1]}'...")
         src_idx = 1
         active_src = cam_sources[src_idx]
-        cap = open_camera(active_src)
+        cap = open_camera(active_src, force_mjpeg=use_mjpeg)
         if not cap.isOpened():
             print("[ERROR] Could not open camera. Please check connection.")
             return
@@ -253,7 +283,7 @@ def main():
                     active_src = cam_sources[src_idx]
                     print(f"\n[INFO] Switching to Camera: '{active_src}'...")
                     cap.release()
-                    cap = open_camera(active_src)
+                    cap = open_camera(active_src, force_mjpeg=use_mjpeg)
                     calibrator.is_calibrated = False
                 elif event.key == pygame.K_r:
                     calibrator.is_calibrated = False
