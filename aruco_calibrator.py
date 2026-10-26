@@ -34,27 +34,26 @@ class ArucoAutoCalibrator:
         
         self.marker_size_mm = marker_size_mm
         self.layout = layout
+        # Full physical workspace size (table coverage)
+        self.ws_w_mm = 360.0
+        self.ws_h_mm = 360.0
 
-        # Physical dimensions of the total 2x2 cluster: 160mm x 160mm
-        self.total_span_x_mm = marker_size_mm * 2 # 160 mm
-        self.total_span_y_mm = marker_size_mm * 2 # 160 mm
-
-        # Destination pixel points for the 4 marker centers or outer corners
         w, h = output_size
-        
-        # When mapping by centers:
-        # Distance from edge to center is 40mm (half marker).
-        # Total span = 160mm.
-        # Center positions normalized in [0, 1] span:
-        # X / Y: 40/160 = 0.25, and 120/160 = 0.75
+        cx_px, cy_px = w / 2.0, h / 2.0
+        scale_x = w / self.ws_w_mm
+        scale_y = h / self.ws_h_mm
+
+        # ArUco cluster (160mm x 160mm) is placed at the front/center of the robot table.
+        # Center of markers is (-40, -40), (+40, -40), (+40, +40), (-40, +40) mm relative to cluster center.
+        # Projecting into the full 360mm x 360mm workspace so the ENTIRE table and objects are in view:
         self.dst_center_pts = np.array([
-            [w * 0.25, h * 0.25], # ID 0: Top-Left center
-            [w * 0.75, h * 0.25], # ID 1: Top-Right center
-            [w * 0.75, h * 0.75], # ID 2: Bottom-Right center
-            [w * 0.25, h * 0.75]  # ID 3: Bottom-Left center
+            [cx_px - 40.0 * scale_x, cy_px - 40.0 * scale_y], # ID 0: Top-Left center
+            [cx_px + 40.0 * scale_x, cy_px - 40.0 * scale_y], # ID 1: Top-Right center
+            [cx_px + 40.0 * scale_x, cy_px + 40.0 * scale_y], # ID 2: Bottom-Right center
+            [cx_px - 40.0 * scale_x, cy_px + 40.0 * scale_y]  # ID 3: Bottom-Left center
         ], dtype=np.float32)
 
-        # Outer bounding corners in destination crop
+        # Full table workspace outer corners
         self.dst_outer_corners = np.array([
             [0, 0],         # Top-Left
             [w - 1, 0],     # Top-Right
@@ -126,7 +125,7 @@ class ArucoAutoCalibrator:
             inv_H = np.linalg.inv(self.homography_matrix)
             poly_pts = cv2.perspectiveTransform(self.dst_outer_corners[None, :, :], inv_H)[0].astype(np.int32)
             cv2.polylines(debug_view, [poly_pts], isClosed=True, color=(0, 255, 0), thickness=2)
-            cv2.putText(debug_view, "CALIBRATED WORKSPACE (16x16cm)", (poly_pts[0][0], max(poly_pts[0][1] - 10, 20)),
+            cv2.putText(debug_view, "OCTO WORKSPACE (360x360mm Table)", (poly_pts[0][0], max(poly_pts[0][1] - 10, 20)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
             return calibrated, debug_view
         else:
