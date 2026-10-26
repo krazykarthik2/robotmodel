@@ -21,6 +21,7 @@ from aruco_calibrator import ArucoAutoCalibrator
 from voice_instruction import listen_for_instruction
 from dobot_urdf_renderer import DobotURDFRenderer
 from dobot_magician_ros2.ai_training.env.dobot_env import DobotKinematics
+from table_vision_detector import detect_colored_objects
 import json
 
 CONFIG_FILE = "calibration_config.json"
@@ -393,6 +394,34 @@ def main():
             
             print(f"\n--- Closed-Loop Cycle [{chunk_idx}/{total_chunks}] --- Robot: X={cur_pose['x']:.1f}, Y={cur_pose['y']:.1f}, Z={cur_pose['z']:.1f}")
 
+            # Detect colored objects live from the calibrated observation
+            detected_items = detect_colored_objects(last_crop)
+            target_obj_coords = None
+            dest_obj_coords = None
+
+            # Parse language instruction for target and destination colors
+            inst_lower = current_instruction.lower()
+            colors_list = ["red", "green", "blue", "yellow", "orange", "purple"]
+            mentioned = [c for c in colors_list if c in inst_lower]
+            
+            if len(mentioned) >= 1 and mentioned[0] in detected_items:
+                target_obj_coords = detected_items[mentioned[0]]["phys_mm"]
+            if len(mentioned) >= 2 and mentioned[1] in detected_items:
+                dest_obj_coords = detected_items[mentioned[1]]["phys_mm"]
+
+            # Hybrid VLA Guidance: If object detected in camera, compute visual guidance vector
+            guidance_dx = 0.0
+            guidance_dy = 0.0
+            if target_obj_coords is not None:
+                # Vector from robot EE to target object
+                diff_x = target_obj_coords[0] - cur_pose['x']
+                diff_y = target_obj_coords[1] - cur_pose['y']
+                dist_xy = (diff_x**2 + diff_y**2)**0.5
+                if dist_xy > 10.0:
+                    # Blend 40% Octo policy with 60% direct visual target servoing
+                    guidance_dx = (diff_x / dist_xy) * min(dist_xy, 25.0)
+                    guidance_dy = (diff_y / dist_xy) * min(dist_xy, 25.0)
+
             # Receding horizon visual servoing: execute only the first 1-2 steps, then re-observe!
             for s_idx in range(exec_steps):
                 if not running or not is_executing:
@@ -401,14 +430,19 @@ def main():
                 step_num = s_idx + 1
                 status_text = f"CLOSED LOOP STEP {step_num}/{exec_steps} (CYCLE {chunk_idx}/{total_chunks})..."
                 
-                # Canonical Octo to Dobot Coordinate Mapping:
-                # - Act[0] (meters): forward / backward
-                # - Act[1] (meters): lateral left / right
-                # - Act[2] (meters): vertical descent / ascent
-                dx_mm = act[0] * 1000.0 * args.step_gain
-                dy_mm = act[1] * 1000.0 * args.step_gain
-                dz_mm = act[2] * 1000.0 * args.step_gain
+                # Canonical Octo to Dobot Coordinate Mapping blended with visual closed-loop servoing
+                octo_dx = act[0] * 1000.0 * args.step_gain
+                octo_dy = act[1] * 1000.0 * args.step_gain
+                octo_dz = act[2] * 1000.0 * args.step_gain
                 grip_val = act[6]
+
+                if guidance_dx != 0.0 or guidance_dy != 0.0:
+                    dx_mm = 0.35 * octo_dx + 0.65 * guidance_dx
+                    dy_mm = 0.35 * octo_dy + 0.65 * guidance_dy
+                else:
+                    dx_mm = octo_dx
+                    dy_mm = octo_dy
+                dz_mm = octo_dz
 
                 raw_tx = cur_pose['x'] + dx_mm
                 raw_ty = cur_pose['y'] + dy_mm
