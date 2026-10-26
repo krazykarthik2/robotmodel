@@ -153,6 +153,20 @@ class DobotUnifiedDriver:
         dev._send_command(msg_alarm)
         time.sleep(0.1)
 
+        # Ensure suction and gripper are explicitly OFF (stop sucking immediately)
+        msg_suck = Message()
+        msg_suck.id = 62 # SET_END_EFFECTOR_SUCTION_CUP
+        msg_suck.ctrl = 0x01 # Immediate
+        msg_suck.params = bytearray([0x00, 0x00]) # disable enable, disable suck
+        dev._send_command(msg_suck)
+
+        msg_grip = Message()
+        msg_grip.id = 63 # SET_END_EFFECTOR_GRIPPER
+        msg_grip.ctrl = 0x01 # Immediate
+        msg_grip.params = bytearray([0x00, 0x00])
+        dev._send_command(msg_grip)
+        time.sleep(0.05)
+
     def get_pose(self):
         """Returns physical coordinates [x, y, z, r, j1, j2, j3, j4]."""
         if self.mode == "pydobot" and self.device:
@@ -166,10 +180,22 @@ class DobotUnifiedDriver:
         else:
             return {"x": 200.0, "y": 0.0, "z": 100.0, "r": 0.0, "j1": 0.0, "j2": 0.0, "j3": 0.0, "j4": 0.0}
 
-    def move_to_xyz(self, x_mm, y_mm, z_mm, r_deg=0.0, wait=True):
+    def move_to_xyz(self, x_mm, y_mm, z_mm, r_deg=0.0, wait=False):
         """Moves robot to target Cartesian position in mm."""
         if self.mode == "pydobot" and self.device:
-            self.device.move_to(x_mm, y_mm, z_mm, r_deg, wait=wait)
+            self.device.move_to(x_mm, y_mm, z_mm, r_deg, wait=False)
+            if wait:
+                # Poll pose until within tolerance or max timeout to prevent infinite queue hang
+                t0 = time.time()
+                while time.time() - t0 < 5.0:
+                    try:
+                        p = self.device.pose()
+                        err = ((p[0]-x_mm)**2 + (p[1]-y_mm)**2 + (p[2]-z_mm)**2)**0.5
+                        if err < 5.0:
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(0.05)
         elif self.mode == "dll" and self.api:
             cmd_idx = dType.SetPTPCmd(self.api, dType.PTPMode.PTPMOVLXYZMode, x_mm, y_mm, z_mm, r_deg, isQueued=1)[0]
             if wait:
@@ -177,26 +203,43 @@ class DobotUnifiedDriver:
         else:
             print(f"[DRY-RUN MOVE] X={x_mm:.1f}mm, Y={y_mm:.1f}mm, Z={z_mm:.1f}mm, R={r_deg:.1f}deg")
 
-    def set_gripper(self, state, wait=True):
+    def set_suction(self, enable=False):
+        """Explicitly enables or disables suction pump."""
+        if self.mode == "pydobot" and self.device:
+            msg = Message()
+            msg.id = 62 # SET_END_EFFECTOR_SUCTION_CUP
+            msg.ctrl = 0x01 # Immediate write
+            msg.params = bytearray([0x01 if enable else 0x00, 0x01 if enable else 0x00])
+            self.device._send_command(msg)
+        elif self.mode == "dll" and self.api:
+            dType.SetEndEffectorSuctionCup(self.api, 1 if enable else 0, 1 if enable else 0, isQueued=0)
+        else:
+            print(f"[DRY-RUN SUCTION] {'ON' if enable else 'OFF'}")
+
+    def set_gripper(self, state, wait=False):
         """Controls gripper: 'open', 'close', or 'off'."""
         if self.mode == "pydobot" and self.device:
+            # Always ensure suction is off when manipulating gripper or in neutral
+            self.set_suction(False)
             enable = True if state in ["open", "close"] else False
             grip = True if state == "close" else False
-            self.device.grip(enable and grip)
-            if not enable:
-                self.device.suck(False)
+            msg = Message()
+            msg.id = 63
+            msg.ctrl = 0x01
+            msg.params = bytearray([0x01 if enable else 0x00, 0x01 if grip else 0x00])
+            self.device._send_command(msg)
             if wait:
-                time.sleep(0.2)
+                time.sleep(0.15)
         elif self.mode == "dll" and self.api:
+            dType.SetEndEffectorSuctionCup(self.api, 0, 0, isQueued=0)
             if state == "close":
-                cmd = dType.SetEndEffectorGripper(self.api, 1, 1, isQueued=1)[0]
+                cmd = dType.SetEndEffectorGripper(self.api, 1, 1, isQueued=0)
             elif state == "open":
-                cmd = dType.SetEndEffectorGripper(self.api, 1, 0, isQueued=1)[0]
+                cmd = dType.SetEndEffectorGripper(self.api, 1, 0, isQueued=0)
             else:
-                cmd = dType.SetEndEffectorGripper(self.api, 0, 0, isQueued=1)[0]
+                cmd = dType.SetEndEffectorGripper(self.api, 0, 0, isQueued=0)
             if wait:
-                self._wait_dll_cmd(cmd)
-                time.sleep(0.2)
+                time.sleep(0.15)
         else:
             print(f"[DRY-RUN GRIPPER] State set to: {state.upper()}")
 
