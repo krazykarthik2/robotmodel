@@ -189,9 +189,10 @@ class DobotURDFRenderer:
         - Third-person camera: 640x480
         """
         # --- 1. Third Person View (640x480) ---
-        cam_tp = pyrender.PerspectiveCamera(yfov=np.radians(48.0))
-        eye_tp = np.array([0.48, 0.34, 0.36])
-        tgt_tp = np.array([0.20, 0.0, 0.06])
+        # Position camera in front of the robot looking towards base (matching real camera perspective)
+        cam_tp = pyrender.PerspectiveCamera(yfov=np.radians(46.0))
+        eye_tp = np.array([0.52, 0.18, 0.32]) # Elevated front-quarter perspective
+        tgt_tp = np.array([0.18, 0.0, 0.05])
         up_tp = np.array([0, 0, 1])
         fwd_tp = (tgt_tp - eye_tp) / np.linalg.norm(tgt_tp - eye_tp)
         rgt_tp = np.cross(fwd_tp, up_tp) / np.linalg.norm(np.cross(fwd_tp, up_tp))
