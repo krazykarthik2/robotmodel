@@ -217,8 +217,9 @@ def main():
     parser.add_argument("--swap_xy", action="store_true", default=False, help="Swap X and Y axes if camera view is rotated 90 degrees")
     parser.add_argument("--auto_home", action="store_true", help="Perform real hardware HOME calibration on startup to automatically calibrate simulation")
     parser.add_argument("--workspace_mm", type=float, default=360.0, help="Workspace table span in mm (default: 360mm)")
-    parser.add_argument("--num_chunks", type=int, default=10, help="Number of continuous Octo policy rollout cycles to execute (default: 10)")
-    parser.add_argument("--step_gain", type=float, default=15.0, help="Scaling gain from Octo delta to physical mm (default: 15.0)")
+    parser.add_argument("--num_chunks", type=int, default=20, help="Number of continuous closed-loop policy iterations (default: 20)")
+    parser.add_argument("--step_gain", type=float, default=2.0, help="Scaling gain from Octo meters to physical mm (default: 2.0)")
+    parser.add_argument("--steps_per_chunk", type=int, default=2, help="Number of steps to execute per visual feedback observation (receding-horizon closed-loop: 1 or 2, default: 2)")
     parser.add_argument("--no_mjpeg", action="store_true", help="Disable MJPEG fourcc request")
     args = parser.parse_args()
 
@@ -353,10 +354,12 @@ def main():
             return
         is_executing = True
         total_chunks = args.num_chunks
-        print(f"\n{'=' * 60}")
-        print(f"[OCTO ROLLOUT STARTED] Task: \"{current_instruction}\"")
-        print(f"[INFO] Executing closed-loop policy loop for {total_chunks} chunks ({total_chunks * 4} steps total)...")
-        print(f"{'=' * 60}\n")
+        exec_steps = min(max(args.steps_per_chunk, 1), 4)
+        print(f"\n{'=' * 65}")
+        print(f"[CLOSED-LOOP VLA SERVOING STARTED] Task: \"{current_instruction}\"")
+        print(f"[CONFIG] Receding Horizon: Executing {exec_steps} steps per fresh camera observation")
+        print(f"[CONFIG] Step Gain: {args.step_gain}x | Total Iterations: {total_chunks}")
+        print(f"{'=' * 65}\n")
 
         # Encode prompt once
         octo_task = model.create_tasks(texts=[current_instruction])
@@ -365,7 +368,7 @@ def main():
             if not is_executing or not running:
                 break
 
-            status_text = f"OCTO INFERENCE (CHUNK {chunk_idx}/{total_chunks})..."
+            status_text = f"CLOSED-LOOP [{chunk_idx}/{total_chunks}]: OBSERVING & INFERRING..."
             cur_pose = dobot.get_pose()
 
             # Fresh observation from live camera feed
@@ -388,19 +391,20 @@ def main():
             pred_actions = model.sample_actions(octo_obs, octo_task, rng=rng_key, unnormalization_statistics=unnorm_stats)
             actions = np.array(pred_actions[0]) # (4, 7)
             
-            print(f"\n--- Chunk [{chunk_idx}/{total_chunks}] --- Robot Pose: X={cur_pose['x']:.1f}, Y={cur_pose['y']:.1f}, Z={cur_pose['z']:.1f}")
+            print(f"\n--- Closed-Loop Cycle [{chunk_idx}/{total_chunks}] --- Robot: X={cur_pose['x']:.1f}, Y={cur_pose['y']:.1f}, Z={cur_pose['z']:.1f}")
 
-            for s_idx, act in enumerate(actions, 1):
-                if not running:
+            # Receding horizon visual servoing: execute only the first 1-2 steps, then re-observe!
+            for s_idx in range(exec_steps):
+                if not running or not is_executing:
                     break
-                status_text = f"EXECUTING STEP {s_idx}/4 (CHUNK {chunk_idx}/{total_chunks})..."
+                act = actions[s_idx]
+                step_num = s_idx + 1
+                status_text = f"CLOSED LOOP STEP {step_num}/{exec_steps} (CYCLE {chunk_idx}/{total_chunks})..."
                 
-                # Canonical Octo to Dobot Coordinate Mapping (Pre-configured & Verified):
-                # Bridge Dataset standard:
-                # - Act[0] (forward/backward): maps directly to Dobot +X (forward away from base)
-                # - Act[1] (lateral left/right): maps directly to Dobot +Y (left/right)
-                # - Act[2] (height vertical): in Bridge, descending to grasp is negative (-dZ).
-                #   Dobot height Z decreases when approaching table surface.
+                # Canonical Octo to Dobot Coordinate Mapping:
+                # - Act[0] (meters): forward / backward
+                # - Act[1] (meters): lateral left / right
+                # - Act[2] (meters): vertical descent / ascent
                 dx_mm = act[0] * 1000.0 * args.step_gain
                 dy_mm = act[1] * 1000.0 * args.step_gain
                 dz_mm = act[2] * 1000.0 * args.step_gain
@@ -413,8 +417,8 @@ def main():
                 # Enforce physical and kinematic workspace limits
                 target_x, target_y, target_z, was_clamped = enforce_dobot_workspace_limits(raw_tx, raw_ty, raw_tz)
 
-                clamp_msg = f" [OUT-OF-BOUNDS -> PROJECTED TO WORKSPACE]" if was_clamped else ""
-                print(f"  Step {s_idx}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> Target (X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f}){clamp_msg} | Sucker: {grip_val:.2f}")
+                clamp_msg = f" [WORKSPACE CLAMP]" if was_clamped else ""
+                print(f"  Step {step_num}: dX={dx_mm:+.1f} dY={dy_mm:+.1f} dZ={dz_mm:+.1f} -> Target (X={target_x:.1f}, Y={target_y:.1f}, Z={target_z:.1f}){clamp_msg} | Sucker: {grip_val:.2f}")
                 # Move and actively verify physical following
                 reached = dobot.move_to_xyz(target_x, target_y, target_z, wait=True, tolerance_mm=4.0)
 
