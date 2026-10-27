@@ -5,6 +5,7 @@ import sys
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["USE_FLAX"] = "1"
 
 # Bypass TensorFlow Probability version check against TensorFlow
 try:
@@ -43,6 +44,18 @@ if not hasattr(google.protobuf, 'runtime_version'):
         def ValidateProtobufRuntimeVersion(*args, **kwargs):
             return True
     google.protobuf.runtime_version = _MockRuntimeVersion()
+
+# Ensure Flax models are always accessible from transformers
+try:
+    import transformers
+    import transformers.models.auto.modeling_flax_auto as _flax_auto
+    import transformers.models.t5.modeling_flax_t5 as _flax_t5
+    if not hasattr(transformers, 'FlaxAutoModel'):
+        transformers.FlaxAutoModel = _flax_auto.FlaxAutoModel
+    if not hasattr(transformers, 'FlaxT5EncoderModel'):
+        transformers.FlaxT5EncoderModel = _flax_t5.FlaxT5EncoderModel
+except Exception:
+    pass
 
 _orig_clip = jnp.clip
 def _patched_clip(a, a_min=None, a_max=None, *args, **kwargs):
