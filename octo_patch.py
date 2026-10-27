@@ -61,7 +61,7 @@ try:
 except Exception:
     pass
 
-# 5. PATCH deserialize_tree directly in orbax.checkpoint.utils and handler modules
+# 5. ROBUST KEYPATH RECONSTRUCTION FOR ALL SUBMODULES
 try:
     import orbax.checkpoint.utils as _ocp_utils
     from orbax.checkpoint.utils import get_key_name, is_empty_or_leaf
@@ -73,18 +73,22 @@ try:
                 key_name = get_key_name(key)
                 if not isinstance(result, list) and key_name not in result:
                     key_name = str(key_name)
-                
-                # Checkpoint discrepancy bypass for FlaxT5EncoderModule_0
-                if not isinstance(result, list) and key_name not in result:
+
+                if isinstance(result, dict) and key_name not in result:
+                    # If navigating through LanguageTokenizer / T5 scope discrepancy
                     if 'FlaxT5EncoderModule' in str(key_name):
                         continue
+                    elif 'encoder' in result:
+                        result = result['encoder']
+                    elif 'shared' in result:
+                        result = result['shared']
                     elif 'hf_model' in result:
                         result = result['hf_model']
-                        if key_name in result:
-                            result = result[key_name]
-                        continue
-                
-                result = result[key_name]
+
+                if isinstance(result, dict) and key_name in result:
+                    result = result[key_name]
+                else:
+                    return result
             return result
 
         return jax.tree_util.tree_map_with_path(
@@ -94,8 +98,6 @@ try:
         )
 
     _ocp_utils.deserialize_tree = patched_deserialize_tree
-
-    # Also patch inside pytree_checkpoint_handler which imported deserialize_tree
     import orbax.checkpoint.pytree_checkpoint_handler as _pch
     _pch.utils.deserialize_tree = patched_deserialize_tree
     if hasattr(_pch, 'deserialize_tree'):
