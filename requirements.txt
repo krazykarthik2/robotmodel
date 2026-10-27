@@ -1,10 +1,13 @@
 # Vision-Language-Action (Octo) Core Environment Requirements
 # Compatible across Python 3.10, 3.11, and 3.12 (Linux GPU & CUDA 12)
 
+# UC Berkeley Data Loader dependency for Octo
+git+https://github.com/kvablack/dlimp.git@92e3eca97af3b14d0b6aa15182c0dc240407698d
+
 # Official Octo Repository
 git+https://github.com/octo-models/octo.git@241fb3514b7c40957a86d869fecb7c7fc353f540
 
-# JAX / Flax Ecosystem (CUDA 12 compatible)
+# JAX / Flax Ecosystem with CUDA 12 support
 jax[cuda12_pip]>=0.4.25
 flax>=0.8.0
 optax>=0.1.7
@@ -32,4 +35,5 @@ transforms3d>=0.4.2
 gym==0.26.2
 tensorflow>=2.15.0
 tensorflow-probability>=0.23.0
+tensorflow-datasets>=4.9.0
 distrax>=0.1.5
