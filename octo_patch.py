@@ -10,16 +10,16 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 # 1. IMPORT TRANSFORMERS FIRST
 import transformers
 from transformers import AutoConfig, AutoTokenizer, FlaxT5EncoderModel
+from transformers.models.t5.tokenization_t5 import T5Tokenizer
 
-# Patch AutoTokenizer to force use_fast=False if convert_slow_tokenizer fails
-_orig_auto_tok_from_pretrained = AutoTokenizer.from_pretrained
+# Patch AutoTokenizer so it always uses the pure Python T5Tokenizer and avoids fast tokenizer bug
 def _patched_auto_tok(pretrained_model_name_or_path, *inputs, **kwargs):
-    try:
-        return _orig_auto_tok_from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
-    except Exception:
-        kwargs["use_fast"] = False
-        return _orig_auto_tok_from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
-AutoTokenizer.from_pretrained = _patched_auto_tok
+    if "t5" in str(pretrained_model_name_or_path).lower():
+        return T5Tokenizer.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+    return AutoTokenizer.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+
+import octo.data.utils.text_processing as _tp
+_tp.AutoTokenizer.from_pretrained = _patched_auto_tok
 
 # 2. IMPORT JAX
 import jax
