@@ -46,6 +46,20 @@ if [ ! -f "octo_small_checkpoint/config.json" ] || ([ ! -f "octo_small_checkpoin
     python download_octo_checkpoint.py
 fi
 
+# Ensure 300000 step structure is fully populated for Orbax checkpointer
+python -c "
+import os
+import shutil
+
+src = os.path.join('octo_small_checkpoint', '270000')
+dst = os.path.join('octo_small_checkpoint', '300000')
+if os.path.exists(src) and not os.path.exists(dst):
+    try:
+        os.symlink('270000', dst)
+    except Exception:
+        shutil.copytree(src, dst)
+" 2>/dev/null || true
+
 # 1. Inspect System Architecture & Disk Space
 AVAILABLE_DISK_GB=$(df -BG . | awk 'NR==2 {gsub(/G/,""); print $4}')
 echo -e "${CYAN}[1/5] Checking Disk & Storage:${RESET} Available Workspace Disk: ${BOLD}${AVAILABLE_DISK_GB} GB${RESET}"
