@@ -6,7 +6,7 @@ import cv2
 import pyrender
 import octo_patch
 from dobot_urdf_renderer import DobotURDFRenderer
-from dobot_magician_ros2.ai_training.env.dobot_env import DobotKinematics
+from dobot_kinematics import DobotKinematics
 
 # Target colors
 COLOR_RGB_MAP = {

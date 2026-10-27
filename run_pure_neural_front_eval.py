@@ -8,7 +8,7 @@ import imageio
 import octo_patch
 from octo.model.octo_model import OctoModel
 from dobot_urdf_renderer import DobotURDFRenderer
-from dobot_magician_ros2.ai_training.env.dobot_env import DobotKinematics
+from dobot_kinematics import DobotKinematics
 import pyrender
 
 # Target colors
