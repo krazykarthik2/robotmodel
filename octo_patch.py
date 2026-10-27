@@ -5,13 +5,14 @@ import sys
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["USE_FLAX"] = "1"
-
-# Prevent TensorFlow from loading CUDA libraries so JAX has full control or CPU fallback runs cleanly
-os.environ["CUDA_VISIBLE_DEVICES"] = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-# Prevent TensorFlow oneDNN numerical variance / verbose warnings
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
+# 1. IMPORT TRANSFORMERS & FLAX FIRST (Before TensorFlow touches any C++ runtime)
+import transformers
+import transformers.models.t5.modeling_flax_t5 as _flax_t5
+from transformers import AutoConfig, FlaxT5EncoderModel
+
+# 2. IMPORT JAX
 import jax
 import jax.numpy as jnp
 import jax.tree_util
@@ -27,7 +28,7 @@ if not hasattr(jax, 'tree_map'):
 if not hasattr(jax, 'tree_leaves'):
     jax.tree_leaves = jax.tree_util.tree_leaves
 
-# Fix google.protobuf runtime_version mismatch with newer tensorflow_metadata / tfds
+# 3. FIX PROTOBUF RUNTIME VERSION FOR TFDS
 import google.protobuf
 if not hasattr(google.protobuf, 'runtime_version'):
     class _MockDomain:
@@ -40,7 +41,7 @@ if not hasattr(google.protobuf, 'runtime_version'):
             return True
     google.protobuf.runtime_version = _MockRuntimeVersion()
 
-# Bypass TensorFlow Probability version check against TensorFlow without triggering TF CUDA init
+# 4. NOW IMPORT TENSORFLOW SAFELY (C++ symbols already bound to Flax/JAX)
 try:
     import tensorflow as tf
     if hasattr(tf, "__version__"):
@@ -52,14 +53,11 @@ except Exception:
 
 # Patch LanguageTokenizer cleanly
 try:
-    from transformers import AutoConfig, FlaxT5EncoderModel
     import octo.model.components.tokenizers as _tok
-    
-    _orig_setup = _tok.LanguageTokenizer.setup
     def _safe_setup(self):
         if self.encoder is not None:
             config = AutoConfig.from_pretrained(self.encoder)
-            self.hf_model = FlaxT5EncoderModel(config).module
+            self.hf_model = _flax_t5.FlaxT5EncoderModel(config).module
     _tok.LanguageTokenizer.setup = _safe_setup
 except Exception:
     pass
