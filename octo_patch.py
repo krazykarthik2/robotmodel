@@ -61,13 +61,12 @@ try:
 except Exception:
     pass
 
-# Patch HFTokenizer to avoid sentencepiece / online vocab file download crashes
+# Patch HFTokenizer to accept all keyword arguments (*args, **kwargs)
 try:
     import octo.data.utils.text_processing as _tp
     class _DummyTokenizer:
         def __call__(self, text, *args, **kwargs):
             import numpy as np
-            # Return valid T5 token dict structure matching (batch, max_len=16)
             if isinstance(text, str):
                 text = [text]
             bsz = len(text)
@@ -80,7 +79,10 @@ try:
             return np.zeros((16,), dtype=np.int32)
 
     _orig_hftok_init = _tp.HFTokenizer.__init__
-    def _safe_hftok_init(self, tokenizer_name="t5-base"):
+    def _safe_hftok_init(self, tokenizer_name="t5-base", *args, **kwargs):
+        self.tokenizer_name = tokenizer_name
+        for k, v in kwargs.items():
+            setattr(self, k, v)
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, local_files_only=False)
         except Exception:
