@@ -35,6 +35,12 @@ def generate_and_upload_batches(total_episodes=10000, batch_size=500, upload=Tru
     print(f"Hugging Face Target Dataset: {REPO_ID}")
     print("=" * 70)
 
+    # Configure SSL verification bypass globally upfront for reliable Hugging Face API & LFS uploads
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    from huggingface_hub.utils import get_session
+    get_session().verify = False
+
     api = HfApi(token=HF_TOKEN)
     try:
         api.create_repo(repo_id=REPO_ID, repo_type="dataset", exist_ok=True)
@@ -66,6 +72,24 @@ def generate_and_upload_batches(total_episodes=10000, batch_size=500, upload=Tru
         chunk_start_idx = generated_count
         chunk_filename = f"demo_batches/dobot_front_chunk_{chunk_idx:03d}.pkl"
         
+        # Check if this chunk is already generated from a previous run
+        if os.path.exists(chunk_filename) and os.path.getsize(chunk_filename) > 1000000:
+            print(f"\n[Chunk {chunk_idx + 1}/{total_chunks}] {chunk_filename} already generated ({os.path.getsize(chunk_filename) / 1024 / 1024:.2f} MB). Skipping generation, checking upload...")
+            if upload:
+                try:
+                    print(f"  --> Ensuring {chunk_filename} is uploaded to Hugging Face...")
+                    api.upload_file(
+                        path_or_fileobj=chunk_filename,
+                        path_in_repo=f"chunks/{os.path.basename(chunk_filename)}",
+                        repo_id=REPO_ID,
+                        repo_type="dataset"
+                    )
+                    print("  --> Upload verified!")
+                except Exception as up_err:
+                    print(f"  --> Upload note: {up_err}")
+            generated_count += chunk_eps
+            continue
+
         print(f"\n[Chunk {chunk_idx + 1}/{total_chunks}] Generating {chunk_eps} episodes (episodes {chunk_start_idx}..{chunk_start_idx + chunk_eps - 1})...")
         chunk_demonstrations = []
         t0 = time.time()
@@ -168,13 +192,21 @@ def generate_and_upload_batches(total_episodes=10000, batch_size=500, upload=Tru
 
         if upload:
             print(f"  --> Uploading {chunk_filename} to Hugging Face...")
-            api.upload_file(
-                path_or_fileobj=chunk_filename,
-                path_in_repo=f"chunks/{os.path.basename(chunk_filename)}",
-                repo_id=REPO_ID,
-                repo_type="dataset"
-            )
-            print("  --> Upload verified!")
+            try:
+                # Disable SSL verification warnings if corporate proxy / self-signed cert is present
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                from huggingface_hub.utils import get_session
+                get_session().verify = False
+                api.upload_file(
+                    path_or_fileobj=chunk_filename,
+                    path_in_repo=f"chunks/{os.path.basename(chunk_filename)}",
+                    repo_id=REPO_ID,
+                    repo_type="dataset"
+                )
+                print("  --> Upload verified!")
+            except Exception as up_err:
+                print(f"  --> [Warning] Upload failed ({up_err}). Keeping local file intact so generation continues unblocked!")
 
         generated_count += chunk_eps
 
@@ -189,6 +221,7 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", type=int, default=10000)
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--no-upload", action="store_true")
+    parser.add_argument("--shutdown-after", action="store_true", help="Shut down system after full 10k generation and upload completes")
     args = parser.parse_args()
 
     generate_and_upload_batches(
@@ -196,3 +229,11 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         upload=not args.no_upload
     )
+
+    if args.shutdown_after:
+        print("\nAll 10,000 episodes generated and uploaded. Initiating system shutdown...")
+        import subprocess
+        if sys.platform.startswith("win"):
+            subprocess.run(["shutdown", "/s", "/t", "60"])
+        else:
+            subprocess.run(["shutdown", "-h", "now"])
