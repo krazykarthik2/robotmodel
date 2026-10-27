@@ -143,9 +143,14 @@ def train_dobot_octo_head(
             )
             epoch_loss += float(loss_val)
 
+            # Step level reporting with tqdm / flush
+            if (b_idx + 1) % 10 == 0 or (b_idx + 1) == n_batches:
+                sys.stdout.write(f"\r  Epoch {epoch+1:02d}/{num_epochs:02d} | Batch {b_idx+1:03d}/{n_batches:03d} | Current Loss: {float(loss_val):.4f} | Total Time: {time.time()-start_time:.1f}s")
+                sys.stdout.flush()
+
         avg_loss = epoch_loss / n_batches
         elapsed = time.time() - start_time
-        print(f"Epoch [{epoch+1:02d}/{num_epochs:02d}] | Diffusion Loss: {avg_loss:.4f} | Time: {elapsed:.1f}s")
+        print(f"\n=> Epoch [{epoch+1:02d}/{num_epochs:02d}] Completed | Avg Diffusion Loss: {avg_loss:.4f} | Elapsed: {elapsed:.1f}s")
 
     # 6. Save adapted checkpoint
     print(f"\nSaving fine-tuned model checkpoint to {checkpoint_dir}...")
@@ -157,4 +162,19 @@ def train_dobot_octo_head(
     print("Zero-handholding neural policy adaptation complete.")
 
 if __name__ == "__main__":
-    train_dobot_octo_head(num_epochs=20, batch_size=8)
+    import argparse
+    parser = argparse.ArgumentParser(description="Octo Action Head Fine-Tuning for Dobot")
+    parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--dataset", type=str, default="dobot_front_demonstrations.pkl", help="Demonstration dataset path")
+    parser.add_argument("--checkpoint_dir", type=str, default="octo_dobot_front_checkpoint", help="Output checkpoint directory")
+    args = parser.parse_args()
+
+    train_dobot_octo_head(
+        dataset_path=args.dataset,
+        checkpoint_dir=args.checkpoint_dir,
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.lr
+    )
