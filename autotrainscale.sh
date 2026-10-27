@@ -21,7 +21,13 @@ echo -e "${BOLD}${CYAN}        OCTO VLA AUTOTRAINSCALE: GPU & RESOURCE AUTO-TUNE
 echo -e "${BOLD}${BLUE}======================================================================${RESET}"
 
 # 0. Automatic Dependency Check & Auto-Installation
-echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, NumPy < 2.0)...${RESET}"
+echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, NumPy < 2.0, Transformers < 5.0)...${RESET}"
+# Enforce transformers < 5.0.0 (Transformers v5 completely removed Flax/JAX support)
+python -c "import transformers; assert int(transformers.__version__.split('.')[0]) < 5, 'Transformers v5 dropped Flax'" 2>/dev/null || {
+    echo -e "${YELLOW}Transformers v5 detected. Downgrading to transformers==4.46.3...${RESET}"
+    pip install "transformers>=4.40.0,<5.0.0"
+}
+
 # Enforce numpy < 2.0.0 for tensorstore and JAX C-extension ABI stability
 python -c "import numpy as np; assert int(np.__version__.split('.')[0]) < 2, 'NumPy 2.x ABI mismatch'" 2>/dev/null || {
     echo -e "${YELLOW}NumPy 2.x detected or incompatible ABI. Downgrading to NumPy 1.26.4...${RESET}"
@@ -30,7 +36,7 @@ python -c "import numpy as np; assert int(np.__version__.split('.')[0]) < 2, 'Nu
 
 python -c "import octo; import dlimp; import tf_keras; import jax" 2>/dev/null || {
     echo -e "${YELLOW}Missing packages detected. Installing requirements...${RESET}"
-    pip install "numpy<2.0.0" tf-keras
+    pip install "numpy<2.0.0" "transformers>=4.40.0,<5.0.0" tf-keras
     pip install -r requirements.txt
 }
 
