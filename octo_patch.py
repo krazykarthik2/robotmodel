@@ -6,6 +6,16 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+# Bypass TensorFlow Probability version check against TensorFlow
+try:
+    import tensorflow as tf
+    if hasattr(tf, "__version__"):
+        parts = tf.__version__.split(".")
+        if len(parts) >= 2 and parts[0] == "2" and int(parts[1]) < 18:
+            tf.__version__ = "2.18.0"
+except Exception:
+    pass
+
 import jax
 import jax.numpy as jnp
 import jax.tree_util
@@ -43,4 +53,3 @@ jnp.clip = _patched_clip
 
 import octo.utils.typing
 octo.utils.typing.PRNGKey = jax.Array
-
