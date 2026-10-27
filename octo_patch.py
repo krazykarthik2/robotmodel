@@ -51,34 +51,56 @@ except Exception:
     pass
 
 # Patch LanguageTokenizer cleanly
-# The original checkpoint saves T5 under 'hf_model': {'encoder': ..., 'shared': ...}
-# When calling FlaxT5EncoderModel(config), module has attribute .encoder and .shared
 try:
     import octo.model.components.tokenizers as _tok
     def _safe_setup(self):
         if self.encoder is not None:
             config = AutoConfig.from_pretrained(self.encoder)
-            # Use module.encoder and module.shared exactly matching checkpoint
             self.hf_model = FlaxT5EncoderModel(config).module
     _tok.LanguageTokenizer.setup = _safe_setup
 except Exception:
     pass
 
 # Patch Orbax deserialize_tree for FlaxT5EncoderModule_0 name mismatch
-try:
-    import orbax.checkpoint.utils as _ocp_utils
-    _orig_recon = _ocp_utils._reconstruct_from_keypath
-    def _patched_recon(path, item, value):
-        try:
-            return _orig_recon(path, item, value)
-        except KeyError as ke:
-            # Handle FlaxT5EncoderModule_0 vs hf_model structural naming discrepancy
-            if 'FlaxT5EncoderModule_0' in str(ke):
-                return value
-            raise ke
-    _ocp_utils._reconstruct_from_keypath = _patched_recon
-except Exception:
-    pass
+def _apply_orbax_patch():
+    # Patch across all potential import locations in orbax.checkpoint
+    modules_to_patch = []
+    try:
+        import orbax.checkpoint.utils as u1
+        modules_to_patch.append(u1)
+    except Exception:
+        pass
+    try:
+        import orbax.checkpoint._src.tree.utils as u2
+        modules_to_patch.append(u2)
+    except Exception:
+        pass
+
+    for mod in modules_to_patch:
+        if hasattr(mod, '_reconstruct_from_keypath'):
+            _orig = getattr(mod, '_reconstruct_from_keypath')
+            def make_patched(orig_fn):
+                def _reconstruct_from_keypath_patched(entry, target):
+                    # Handle dictionary key lookup safely
+                    try:
+                        res = entry
+                        for key in target:
+                            k_name = getattr(key, 'key', key)
+                            if k_name in res:
+                                res = res[k_name]
+                            elif 'FlaxT5EncoderModule' in str(k_name) or k_name == 'FlaxT5EncoderModule_0':
+                                continue
+                            elif 'hf_model' in res:
+                                res = res['hf_model']
+                            else:
+                                return entry
+                        return res
+                    except Exception:
+                        return entry
+                return _reconstruct_from_keypath_patched
+            setattr(mod, '_reconstruct_from_keypath', make_patched(_orig))
+
+_apply_orbax_patch()
 
 _orig_clip = jnp.clip
 def _patched_clip(a, a_min=None, a_max=None, *args, **kwargs):
