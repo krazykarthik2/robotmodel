@@ -7,18 +7,10 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["USE_FLAX"] = "1"
 
-# Tell TensorFlow to leave GPU memory completely alone for JAX
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-try:
-    import tensorflow as tf
-    # Hide GPUs from TensorFlow so only JAX manages the CUDA devices
-    tf.config.set_visible_devices([], 'GPU')
-    if hasattr(tf, "__version__"):
-        parts = tf.__version__.split(".")
-        if len(parts) >= 2 and parts[0] == "2" and int(parts[1]) < 18:
-            tf.__version__ = "2.18.0"
-except Exception:
-    pass
+# Prevent TensorFlow from loading CUDA libraries so JAX has full control or CPU fallback runs cleanly
+os.environ["CUDA_VISIBLE_DEVICES"] = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+# Prevent TensorFlow oneDNN numerical variance / verbose warnings
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 import jax
 import jax.numpy as jnp
@@ -48,9 +40,18 @@ if not hasattr(google.protobuf, 'runtime_version'):
             return True
     google.protobuf.runtime_version = _MockRuntimeVersion()
 
-# Ensure LanguageTokenizer cleanly loads FlaxT5EncoderModel.module
+# Bypass TensorFlow Probability version check against TensorFlow without triggering TF CUDA init
 try:
-    import transformers
+    import tensorflow as tf
+    if hasattr(tf, "__version__"):
+        parts = tf.__version__.split(".")
+        if len(parts) >= 2 and parts[0] == "2" and int(parts[1]) < 18:
+            tf.__version__ = "2.18.0"
+except Exception:
+    pass
+
+# Patch LanguageTokenizer cleanly
+try:
     from transformers import AutoConfig, FlaxT5EncoderModel
     import octo.model.components.tokenizers as _tok
     
