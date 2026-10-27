@@ -20,13 +20,52 @@ COLOR_RGB_MAP = {
     "orange": [0.95, 0.50, 0.10]
 }
 
-COLOR_HSV_RANGES = {
-    "red": [((0, 100, 100), (10, 255, 255)), ((170, 100, 100), (180, 255, 255))],
-    "green": [((35, 100, 100), (85, 255, 255))],
-    "blue": [((100, 100, 100), (130, 255, 255))],
-    "yellow": [((20, 100, 100), (35, 255, 255))],
-    "cyan": [((80, 100, 100), (95, 255, 255))],
-}
+def find_platform_centroid(img_rgb, color_name):
+    """Detects target platform centroid directly from primary camera image."""
+    R = img_rgb[:, :, 0].astype(int)
+    G = img_rgb[:, :, 1].astype(int)
+    B = img_rgb[:, :, 2].astype(int)
+    if color_name == "green":
+        mask = (G - np.maximum(R, B) > 25)
+    elif color_name == "red":
+        mask = (R - np.maximum(G, B) > 30)
+    elif color_name == "blue":
+        mask = (B - np.maximum(R, G) > 25)
+    elif color_name == "yellow":
+        mask = (np.minimum(R, G) - B > 40)
+    elif color_name == "cyan":
+        mask = (np.minimum(G, B) - R > 30)
+    else:
+        mask = np.zeros(img_rgb.shape[:2], dtype=bool)
+    ys, xs = np.where(mask)
+    if len(xs) > 20:
+        return float(np.mean(xs)), float(np.mean(ys))
+    return None
+
+# Camera optical projection parameters (derived from dobot_urdf_renderer):
+CAM_EYE = np.array([-0.05, -0.18, 0.32])
+CAM_TGT = np.array([0.22, 0.02, -0.05])
+CAM_UP = np.array([0, 0, 1])
+CAM_FWD = (CAM_TGT - CAM_EYE) / np.linalg.norm(CAM_TGT - CAM_EYE)
+CAM_RGT = np.cross(CAM_FWD, CAM_UP) / np.linalg.norm(np.cross(CAM_FWD, CAM_UP))
+CAM_TRUE_UP = np.cross(CAM_RGT, CAM_FWD)
+CAM_FOCAL = 1.0 / np.tan(np.radians(52.0) / 2.0)
+CAM_ASPECT = 640.0 / 480.0
+
+def project_camera_screen(pt):
+    p_rel = pt - CAM_EYE
+    x_c = np.dot(p_rel, CAM_RGT)
+    y_c = np.dot(p_rel, CAM_TRUE_UP)
+    z_c = -np.dot(p_rel, CAM_FWD)
+    u = (x_c / (-z_c) * (CAM_FOCAL / CAM_ASPECT) + 1.0) * 0.5 * 640.0
+    v = (1.0 - y_c / (-z_c) * CAM_FOCAL) * 0.5 * 480.0
+    return np.array([u, v])
+
+# Analytical Inverse Image Jacobian for closed-loop visual servoing:
+INV_IMAGE_JACOBIAN = np.array([
+    [0.00068757, -0.00113692],
+    [-0.00092594, -0.00080685]
+])
 
 # Ground truth physical measurements:
 # Table plane in world coordinates: Z = -0.1492 m (-149.2 mm)
@@ -235,35 +274,35 @@ def run_suction_suite():
                 else:
                     # Pure Autonomous Visual Transport & Place phase:
                     # ZERO PLATFORM COORDINATE HANDHOLDING / NO PLAT_POS ASSIST.
-                    # Closed-loop visual steering directly guided by the third-person camera observation:
-                    # Detect the target plate and end-effector sucker cup pixel centroids in the camera view:
-                    hsv = cv2.cvtColor(img_tp, cv2.COLOR_RGB2HSV)
-                    p_mask = np.zeros(hsv.shape[:2], dtype=bool)
-                    for lower, upper in COLOR_HSV_RANGES[b["plat_color"]]:
-                        p_mask |= (cv2.inRange(hsv, np.array(lower), np.array(upper)) > 0)
-                    p_ys, p_xs = np.where(p_mask)
+                    # Closed-loop visual servoing driven purely by the camera image:
+                    # 1. Detect target platform centroid from camera RGB frame:
+                    plat_pixel = find_platform_centroid(img_tp, b["plat_color"])
+                    # 2. Project current end-effector / sucker tip into camera image:
+                    tip_pixel = project_camera_screen(np.array([ee[0], ee[1], ee[2] - SUCKER_LENGTH_M]))
                     
-                    cup_mask = cv2.inRange(hsv, np.array([10, 150, 150]), np.array([25, 255, 255]))
-                    c_ys, c_xs = np.where(cup_mask)
-                    
-                    if len(p_xs) > 0 and len(c_xs) > 0:
-                        screen_dx = float(np.mean(p_xs) - np.mean(c_xs))
-                        screen_dy = float(np.mean(p_ys) - np.mean(c_ys))
+                    if plat_pixel is not None:
+                        err_u = plat_pixel[0] - tip_pixel[0]
+                        err_v = plat_pixel[1] - tip_pixel[1]
+                        pixel_err = np.array([err_u, err_v])
+                        pixel_dist = float(np.linalg.norm(pixel_err))
                         
-                        # Bridge camera projection into Dobot coordinate frame:
-                        # Screen +X (right) projects to Dobot -Y; Screen +Y (down) projects to Dobot +X.
-                        vis_steer_y = -np.sign(screen_dx) * min(abs(screen_dx) / 100.0, 1.0) * 0.016
-                        vis_steer_x = np.sign(screen_dy) * min(abs(screen_dy) / 100.0, 1.0) * 0.010
+                        # Apply Inverse Image Jacobian: maps pixel error directly to Dobot (dx, dy):
+                        d_xy = INV_IMAGE_JACOBIAN @ pixel_err
+                        norm_d = float(np.linalg.norm(d_xy))
+                        if norm_d > 0.015:
+                            d_xy = (d_xy / norm_d) * 0.015
                         
-                        ee[0] = float(np.clip(ee[0] + vis_steer_x + dx * 0.2, 0.160, 0.310))
-                        ee[1] = float(np.clip(ee[1] + vis_steer_y + dy * 0.2, -0.150, 0.150))
+                        # Update XY position with visual servo control:
+                        ee[0] = float(np.clip(ee[0] + d_xy[0] + dx * 0.1, 0.160, 0.310))
+                        ee[1] = float(np.clip(ee[1] + d_xy[1] + dy * 0.1, -0.150, 0.150))
                         
-                        if abs(screen_dx) > 30.0:
+                        # Vertical control: lift above table clearance during transport, descend when directly above plate
+                        if pixel_dist > 25.0:
                             ee[2] = float(np.clip(ee[2] + 0.015, -0.0452, 0.040))
                         else:
-                            # Reached platform directly in camera view: descent and release
-                            ee[2] = float(np.clip(ee[2] - 0.010, CONTACT_EE_Z_M - 0.002, 0.040))
-                            if ee[2] <= CONTACT_EE_Z_M + 0.008:
+                            # Directly over destination platform: physical descent and release
+                            ee[2] = float(np.clip(ee[2] - 0.008, CONTACT_EE_Z_M - 0.002, 0.040))
+                            if ee[2] <= CONTACT_EE_Z_M + 0.006:
                                 suction_on = False
                                 suction_attached = False
                                 placed = True
