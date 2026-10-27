@@ -61,46 +61,47 @@ try:
 except Exception:
     pass
 
-# Patch Orbax deserialize_tree for FlaxT5EncoderModule_0 name mismatch
-def _apply_orbax_patch():
-    # Patch across all potential import locations in orbax.checkpoint
-    modules_to_patch = []
-    try:
-        import orbax.checkpoint.utils as u1
-        modules_to_patch.append(u1)
-    except Exception:
-        pass
-    try:
-        import orbax.checkpoint._src.tree.utils as u2
-        modules_to_patch.append(u2)
-    except Exception:
-        pass
+# 5. PATCH deserialize_tree directly in orbax.checkpoint.utils and handler modules
+try:
+    import orbax.checkpoint.utils as _ocp_utils
+    from orbax.checkpoint.utils import get_key_name, is_empty_or_leaf
 
-    for mod in modules_to_patch:
-        if hasattr(mod, '_reconstruct_from_keypath'):
-            _orig = getattr(mod, '_reconstruct_from_keypath')
-            def make_patched(orig_fn):
-                def _reconstruct_from_keypath_patched(entry, target):
-                    # Handle dictionary key lookup safely
-                    try:
-                        res = entry
-                        for key in target:
-                            k_name = getattr(key, 'key', key)
-                            if k_name in res:
-                                res = res[k_name]
-                            elif 'FlaxT5EncoderModule' in str(k_name) or k_name == 'FlaxT5EncoderModule_0':
-                                continue
-                            elif 'hf_model' in res:
-                                res = res['hf_model']
-                            else:
-                                return entry
-                        return res
-                    except Exception:
-                        return entry
-                return _reconstruct_from_keypath_patched
-            setattr(mod, '_reconstruct_from_keypath', make_patched(_orig))
+    def patched_deserialize_tree(serialized, target, keep_empty_nodes: bool = False):
+        def _reconstruct_from_keypath(keypath, _):
+            result = serialized
+            for key in keypath:
+                key_name = get_key_name(key)
+                if not isinstance(result, list) and key_name not in result:
+                    key_name = str(key_name)
+                
+                # Checkpoint discrepancy bypass for FlaxT5EncoderModule_0
+                if not isinstance(result, list) and key_name not in result:
+                    if 'FlaxT5EncoderModule' in str(key_name):
+                        continue
+                    elif 'hf_model' in result:
+                        result = result['hf_model']
+                        if key_name in result:
+                            result = result[key_name]
+                        continue
+                
+                result = result[key_name]
+            return result
 
-_apply_orbax_patch()
+        return jax.tree_util.tree_map_with_path(
+            _reconstruct_from_keypath,
+            target,
+            is_leaf=is_empty_or_leaf if keep_empty_nodes else None,
+        )
+
+    _ocp_utils.deserialize_tree = patched_deserialize_tree
+
+    # Also patch inside pytree_checkpoint_handler which imported deserialize_tree
+    import orbax.checkpoint.pytree_checkpoint_handler as _pch
+    _pch.utils.deserialize_tree = patched_deserialize_tree
+    if hasattr(_pch, 'deserialize_tree'):
+        _pch.deserialize_tree = patched_deserialize_tree
+except Exception as e:
+    pass
 
 _orig_clip = jnp.clip
 def _patched_clip(a, a_min=None, a_max=None, *args, **kwargs):
