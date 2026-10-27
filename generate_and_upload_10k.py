@@ -121,9 +121,10 @@ def generate_and_upload_batches(total_episodes=10000, batch_size=500, upload=Tru
                 delta_xyz = next_pos - current_ee[:3]
                 act_7d = np.array([delta_xyz[0], delta_xyz[1], delta_xyz[2], 0.0, 0.0, 0.0, grip_val], dtype=np.float32)
 
-                j1, j2, j3 = kin.inverse(current_ee[0], current_ee[1], current_ee[2])
+                j = kin.inverse(current_ee[0], current_ee[1], current_ee[2], current_ee[3])
+                t = renderer.compute_urdf_transforms(j[0], j[1], j[2], j[3], gripper_closed=False)
                 s = renderer.build_scene(
-                    j1, j2, j3, 0.0,
+                    t,
                     cube_pos=current_cube,
                     cube_color_rgb=COLOR_RGB_MAP[c_name],
                     plat_pos=plat_pos,
