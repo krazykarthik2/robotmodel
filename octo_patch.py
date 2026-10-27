@@ -5,11 +5,13 @@ import sys
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["USE_FLAX"] = "1"
 
-# Bypass TensorFlow Probability version check against TensorFlow
+# Tell TensorFlow NOT to allocate GPU memory so JAX has full exclusive GPU access
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 try:
     import tensorflow as tf
+    # Hide physical GPUs from TensorFlow to avoid CUDA driver collision with JAX
+    tf.config.set_visible_devices([], 'GPU')
     if hasattr(tf, "__version__"):
         parts = tf.__version__.split(".")
         if len(parts) >= 2 and parts[0] == "2" and int(parts[1]) < 18:
@@ -44,35 +46,6 @@ if not hasattr(google.protobuf, 'runtime_version'):
         def ValidateProtobufRuntimeVersion(*args, **kwargs):
             return True
     google.protobuf.runtime_version = _MockRuntimeVersion()
-
-# Ensure Flax models are always accessible in transformers module and sys.modules
-try:
-    import transformers
-    import transformers.models.auto.modeling_flax_auto as _flax_auto
-    import transformers.models.t5.modeling_flax_t5 as _flax_t5
-
-    # Inject into transformers _objects and module namespace
-    if hasattr(transformers, '_objects'):
-        transformers._objects['FlaxAutoModel'] = _flax_auto.FlaxAutoModel
-        transformers._objects['FlaxT5EncoderModel'] = _flax_t5.FlaxT5EncoderModel
-
-    setattr(transformers, 'FlaxAutoModel', _flax_auto.FlaxAutoModel)
-    setattr(transformers, 'FlaxT5EncoderModel', _flax_t5.FlaxT5EncoderModel)
-
-    # Monkey patch octo tokenizer setup directly so it never fails
-    import octo.model.components.tokenizers as _tok
-    _orig_setup = _tok.LanguageTokenizer.setup
-    def _patched_setup(self):
-        if self.encoder is not None:
-            from transformers import AutoConfig
-            config = AutoConfig.from_pretrained(self.encoder)
-            if "t5" in self.encoder:
-                self.hf_model = _flax_t5.FlaxT5EncoderModel(config).module
-            else:
-                self.hf_model = _flax_auto.FlaxAutoModel.from_config(config).module
-    _tok.LanguageTokenizer.setup = _patched_setup
-except Exception as e:
-    pass
 
 _orig_clip = jnp.clip
 def _patched_clip(a, a_min=None, a_max=None, *args, **kwargs):
