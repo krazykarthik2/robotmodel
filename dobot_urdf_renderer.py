@@ -2,10 +2,23 @@ import os
 import sys
 
 # Configure headless offscreen rendering for pyrender on Linux/headless servers
-# Prefer OSMesa or EGL for headless GPU/CPU rendering without an X11 server
-if "PYOPENGL_PLATFORM" not in os.environ:
-    # Check if DISPLAY is absent (typical headless VM / Jupyter environment)
-    if "DISPLAY" not in os.environ:
+# If no DISPLAY is found, start a lightweight virtual X11 server (Xvfb) or configure EGL
+if sys.platform.startswith("linux") and "DISPLAY" not in os.environ and "PYOPENGL_PLATFORM" not in os.environ:
+    # Try starting or connecting to Xvfb virtual frame buffer
+    import subprocess
+    import shutil
+    if shutil.which("Xvfb"):
+        try:
+            # Check if display :99 is already running, else start it
+            os.environ["DISPLAY"] = ":99"
+            subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1024x768x24", "-ac", "+extension", "GLX", "+render", "-noreset"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            import time
+            time.sleep(0.5)
+        except Exception:
+            os.environ["PYOPENGL_PLATFORM"] = "egl"
+    else:
+        # Xvfb not installed, default to egl
         os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 import numpy as np
@@ -46,16 +59,8 @@ class DobotURDFRenderer:
             baseColorFactor=[0.20, 0.22, 0.26, 1.0], metallicFactor=0.2, roughnessFactor=0.5
         )
 
-        # Single offscreen renderer to maintain one OpenGL context (fallback gracefully across EGL / OSMesa)
-        try:
-            self.r = pyrender.OffscreenRenderer(width, height)
-        except Exception as e:
-            # If default platform fails (e.g. pyglet without X11 or EGL initialization failure), try osmesa
-            if os.environ.get("PYOPENGL_PLATFORM") != "osmesa":
-                os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-                self.r = pyrender.OffscreenRenderer(width, height)
-            else:
-                raise e
+        # Single offscreen renderer to maintain one OpenGL context
+        self.r = pyrender.OffscreenRenderer(width, height)
 
     @staticmethod
     def make_transform(xyz, rpy):

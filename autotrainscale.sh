@@ -21,7 +21,15 @@ echo -e "${BOLD}${CYAN}        OCTO VLA AUTOTRAINSCALE: GPU & RESOURCE AUTO-TUNE
 echo -e "${BOLD}${BLUE}======================================================================${RESET}"
 
 # 0. Automatic Dependency Check & Auto-Installation
-echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, pycollada, NumPy < 2.0, Transformers < 5.0)...${RESET}"
+echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, pycollada, xvfb, NumPy < 2.0, Transformers < 5.0)...${RESET}"
+# Check if Xvfb or virtual display tools are needed for headless pyrender
+if [ -z "$DISPLAY" ] && ! command -v Xvfb &> /dev/null; then
+    echo -e "${YELLOW}Headless environment detected without Xvfb. Attempting to install xvfb...${RESET}"
+    if command -v sudo &> /dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq xvfb libgl1-mesa-glx 2>/dev/null || true
+    fi
+fi
+
 # Enforce pycollada for trimesh DAE CAD loading
 python -c "import collada" 2>/dev/null || {
     echo -e "${YELLOW}pycollada missing for CAD mesh loading. Installing pycollada...${RESET}"
