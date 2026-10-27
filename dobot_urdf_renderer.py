@@ -10,13 +10,13 @@ if "PYOPENGL_PLATFORM" not in os.environ and "DISPLAY" not in os.environ:
 
 try:
     import pyrender.platforms.egl as _pyrender_egl
-    _orig_get_device_by_index = _pyrender_egl.get_device_by_index
-    def _patched_get_device_by_index(device_id):
-        try:
-            return _orig_get_device_by_index(device_id)
-        except Exception:
-            return _pyrender_egl.get_default_device()
-    _pyrender_egl.get_device_by_index = _patched_get_device_by_index
+    # In headless containers, query_devices() fails or returns [] because of hypervisor restrictions.
+    # Force get_device_by_index and get_default_device to return EGLDevice(None) directly,
+    # which binds egl.EGL_DEFAULT_DISPLAY without crashing.
+    def _safe_get_device(device_id=0):
+        return _pyrender_egl.EGLDevice(None)
+    _pyrender_egl.get_device_by_index = _safe_get_device
+    _pyrender_egl.get_default_device = _safe_get_device
 except Exception:
     pass
 
