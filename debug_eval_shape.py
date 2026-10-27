@@ -22,20 +22,21 @@ if "tasks" in example_batch:
 if "timestep_pad_mask" not in example_batch["observation"]:
     example_batch["observation"]["timestep_pad_mask"] = example_batch["observation"]["pad_mask"]
 
-# Sub-test 1: Test tokenizers independently
-print("\n[A] Testing Octo Tokenizers instantiation...")
-tok_spec = config["model"]["octo_transformer"]["tokenizers"]
-print("  Tokenizers spec:", list(tok_spec.keys()))
+# Sub-test 1: Check Tokenizers keys
+print("\n[A] Octo Tokenizers in config:")
+print("  Observation tokenizers:", list(config["model"]["observation_tokenizers"].keys()))
+print("  Task tokenizers:", list(config["model"]["task_tokenizers"].keys()))
 
-# Sub-test 2: Test Language Tokenizer (T5 Encoder)
-print("\n[B] Testing LanguageTokenizer setup...")
+# Sub-test 2: Test Language Tokenizer (T5 Encoder) directly
+print("\n[B] Testing FlaxT5EncoderModel setup...")
 from transformers import AutoConfig, FlaxT5EncoderModel
 cfg = AutoConfig.from_pretrained("t5-base")
-print("  T5 AutoConfig loaded.")
+print("  T5 AutoConfig loaded successfully.")
+print("  Initializing FlaxT5EncoderModel(cfg)...")
 t5_model = FlaxT5EncoderModel(cfg)
-print("  FlaxT5EncoderModel loaded without segfault!")
+print("  [OK] FlaxT5EncoderModel loaded without segfault!")
 
-# Sub-test 3: Run jax.eval_shape with CPU device context to verify if CUDA JIT triggers segfault
+# Sub-test 3: Run jax.eval_shape with CPU device context
 print("\n[C] Running jax.eval_shape under CPU device...")
 module = OctoModule.create(**config["model"])
 init_args = (
