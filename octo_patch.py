@@ -5,12 +5,13 @@ import sys
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["USE_FLAX"] = "1"
 
-# Tell TensorFlow NOT to allocate GPU memory so JAX has full exclusive GPU access
+# Tell TensorFlow to leave GPU memory completely alone for JAX
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 try:
     import tensorflow as tf
-    # Hide physical GPUs from TensorFlow to avoid CUDA driver collision with JAX
+    # Hide GPUs from TensorFlow so only JAX manages the CUDA devices
     tf.config.set_visible_devices([], 'GPU')
     if hasattr(tf, "__version__"):
         parts = tf.__version__.split(".")
@@ -46,6 +47,21 @@ if not hasattr(google.protobuf, 'runtime_version'):
         def ValidateProtobufRuntimeVersion(*args, **kwargs):
             return True
     google.protobuf.runtime_version = _MockRuntimeVersion()
+
+# Ensure LanguageTokenizer cleanly loads FlaxT5EncoderModel.module
+try:
+    import transformers
+    from transformers import AutoConfig, FlaxT5EncoderModel
+    import octo.model.components.tokenizers as _tok
+    
+    _orig_setup = _tok.LanguageTokenizer.setup
+    def _safe_setup(self):
+        if self.encoder is not None:
+            config = AutoConfig.from_pretrained(self.encoder)
+            self.hf_model = FlaxT5EncoderModel(config).module
+    _tok.LanguageTokenizer.setup = _safe_setup
+except Exception:
+    pass
 
 _orig_clip = jnp.clip
 def _patched_clip(a, a_min=None, a_max=None, *args, **kwargs):
