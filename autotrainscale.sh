@@ -21,7 +21,13 @@ echo -e "${BOLD}${CYAN}        OCTO VLA AUTOTRAINSCALE: GPU & RESOURCE AUTO-TUNE
 echo -e "${BOLD}${BLUE}======================================================================${RESET}"
 
 # 0. Automatic Dependency Check & Auto-Installation
-echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, NumPy < 2.0, Transformers < 5.0)...${RESET}"
+echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, pycollada, NumPy < 2.0, Transformers < 5.0)...${RESET}"
+# Enforce pycollada for trimesh DAE CAD loading
+python -c "import collada" 2>/dev/null || {
+    echo -e "${YELLOW}pycollada missing for CAD mesh loading. Installing pycollada...${RESET}"
+    pip install "pycollada>=0.8"
+}
+
 # Enforce transformers < 5.0.0 (Transformers v5 completely removed Flax/JAX support)
 python -c "import transformers; assert int(transformers.__version__.split('.')[0]) < 5, 'Transformers v5 dropped Flax'" 2>/dev/null || {
     echo -e "${YELLOW}Transformers v5 detected. Downgrading to transformers==4.46.3...${RESET}"
