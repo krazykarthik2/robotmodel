@@ -34,6 +34,20 @@ python -c "import octo; import dlimp; import tf_keras; import jax" 2>/dev/null |
     pip install -r requirements.txt
 }
 
+# Check if pretrained Octo Small weights exist locally, download if missing
+if [ ! -f "octo_small_checkpoint/config.json" ]; then
+    echo -e "${CYAN}Pretrained octo_small_checkpoint not found locally. Downloading from Hugging Face...${RESET}"
+    python -c "
+import huggingface_hub
+huggingface_hub.snapshot_download(
+    repo_id='rail-berkeley/octo-small',
+    local_dir='octo_small_checkpoint',
+    local_dir_use_symlinks=False
+)
+print('Successfully downloaded octo-small checkpoint!')
+"
+fi
+
 # 1. Inspect System Architecture & Disk Space
 AVAILABLE_DISK_GB=$(df -BG . | awk 'NR==2 {gsub(/G/,""); print $4}')
 echo -e "${CYAN}[1/5] Checking Disk & Storage:${RESET} Available Workspace Disk: ${BOLD}${AVAILABLE_DISK_GB} GB${RESET}"

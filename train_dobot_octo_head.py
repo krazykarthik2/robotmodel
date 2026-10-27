@@ -29,7 +29,14 @@ def train_dobot_octo(
 
     # 1. Load Pretrained Octo Model
     print("Loading pretrained Octo Small weights...")
-    model = OctoModel.load_pretrained("octo_small_checkpoint")
+    # Check if local checkpoint exists, otherwise load directly from HuggingFace
+    if os.path.exists("octo_small_checkpoint/config.json"):
+        model_source = "octo_small_checkpoint"
+    else:
+        print("Local octo_small_checkpoint not found on disk. Auto-downloading from HuggingFace (hf://rail-berkeley/octo-small)...")
+        model_source = "hf://rail-berkeley/octo-small"
+
+    model = OctoModel.load_pretrained(model_source)
     stats = model.dataset_statistics["bridge_dataset"]["action"]
     print("Octo Small loaded successfully.")
 
