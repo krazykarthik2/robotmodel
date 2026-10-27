@@ -171,4 +171,10 @@ def generate_expert_demonstrations(num_episodes=120, output_path="dobot_front_de
     print(f"Successfully generated and saved {len(demonstrations)} episodes to {output_path}!")
 
 if __name__ == "__main__":
-    generate_expert_demonstrations(num_episodes=80)
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate Dobot Front Camera Demonstrations")
+    parser.add_argument("--episodes", type=int, default=80, help="Number of demonstration episodes to generate (e.g. 1000 or 10000)")
+    parser.add_argument("--output", type=str, default="dobot_front_demonstrations.pkl", help="Output pickle path")
+    args = parser.parse_args()
+
+    generate_expert_demonstrations(num_episodes=args.episodes, output_path=args.output)
