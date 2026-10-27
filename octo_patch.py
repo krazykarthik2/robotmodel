@@ -45,16 +45,33 @@ if not hasattr(google.protobuf, 'runtime_version'):
             return True
     google.protobuf.runtime_version = _MockRuntimeVersion()
 
-# Ensure Flax models are always accessible from transformers
+# Ensure Flax models are always accessible in transformers module and sys.modules
 try:
     import transformers
     import transformers.models.auto.modeling_flax_auto as _flax_auto
     import transformers.models.t5.modeling_flax_t5 as _flax_t5
-    if not hasattr(transformers, 'FlaxAutoModel'):
-        transformers.FlaxAutoModel = _flax_auto.FlaxAutoModel
-    if not hasattr(transformers, 'FlaxT5EncoderModel'):
-        transformers.FlaxT5EncoderModel = _flax_t5.FlaxT5EncoderModel
-except Exception:
+
+    # Inject into transformers _objects and module namespace
+    if hasattr(transformers, '_objects'):
+        transformers._objects['FlaxAutoModel'] = _flax_auto.FlaxAutoModel
+        transformers._objects['FlaxT5EncoderModel'] = _flax_t5.FlaxT5EncoderModel
+
+    setattr(transformers, 'FlaxAutoModel', _flax_auto.FlaxAutoModel)
+    setattr(transformers, 'FlaxT5EncoderModel', _flax_t5.FlaxT5EncoderModel)
+
+    # Monkey patch octo tokenizer setup directly so it never fails
+    import octo.model.components.tokenizers as _tok
+    _orig_setup = _tok.LanguageTokenizer.setup
+    def _patched_setup(self):
+        if self.encoder is not None:
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(self.encoder)
+            if "t5" in self.encoder:
+                self.hf_model = _flax_t5.FlaxT5EncoderModel(config).module
+            else:
+                self.hf_model = _flax_auto.FlaxAutoModel.from_config(config).module
+    _tok.LanguageTokenizer.setup = _patched_setup
+except Exception as e:
     pass
 
 _orig_clip = jnp.clip
