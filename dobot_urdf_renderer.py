@@ -1,25 +1,24 @@
 import os
 import sys
 
-# Configure headless offscreen rendering for pyrender on Linux/headless servers
-# If no DISPLAY is found, start a lightweight virtual X11 server (Xvfb) or configure EGL
-if sys.platform.startswith("linux") and "DISPLAY" not in os.environ and "PYOPENGL_PLATFORM" not in os.environ:
-    # Try starting or connecting to Xvfb virtual frame buffer
-    import subprocess
-    import shutil
-    if shutil.which("Xvfb"):
+# Configure headless offscreen rendering for pyrender
+# In Jupyter/headless environments without DISPLAY or sudo for xvfb, EGL is used.
+# pyrender's egl platform has a known bug where get_device_by_index crashes if query_devices is empty.
+# We patch pyrender.platforms.egl to safely fall back to get_default_device().
+if "PYOPENGL_PLATFORM" not in os.environ and "DISPLAY" not in os.environ:
+    os.environ["PYOPENGL_PLATFORM"] = "egl"
+
+try:
+    import pyrender.platforms.egl as _pyrender_egl
+    _orig_get_device_by_index = _pyrender_egl.get_device_by_index
+    def _patched_get_device_by_index(device_id):
         try:
-            # Check if display :99 is already running, else start it
-            os.environ["DISPLAY"] = ":99"
-            subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1024x768x24", "-ac", "+extension", "GLX", "+render", "-noreset"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            import time
-            time.sleep(0.5)
+            return _orig_get_device_by_index(device_id)
         except Exception:
-            os.environ["PYOPENGL_PLATFORM"] = "egl"
-    else:
-        # Xvfb not installed, default to egl
-        os.environ["PYOPENGL_PLATFORM"] = "egl"
+            return _pyrender_egl.get_default_device()
+    _pyrender_egl.get_device_by_index = _patched_get_device_by_index
+except Exception:
+    pass
 
 import numpy as np
 import trimesh
