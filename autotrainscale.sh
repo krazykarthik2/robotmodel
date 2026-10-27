@@ -21,10 +21,16 @@ echo -e "${BOLD}${CYAN}        OCTO VLA AUTOTRAINSCALE: GPU & RESOURCE AUTO-TUNE
 echo -e "${BOLD}${BLUE}======================================================================${RESET}"
 
 # 0. Automatic Dependency Check & Auto-Installation
-echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, JAX GPU)...${RESET}"
+echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, NumPy < 2.0)...${RESET}"
+# Enforce numpy < 2.0.0 for tensorstore and JAX C-extension ABI stability
+python -c "import numpy as np; assert int(np.__version__.split('.')[0]) < 2, 'NumPy 2.x ABI mismatch'" 2>/dev/null || {
+    echo -e "${YELLOW}NumPy 2.x detected or incompatible ABI. Downgrading to NumPy 1.26.4...${RESET}"
+    pip install "numpy<2.0.0"
+}
+
 python -c "import octo; import dlimp; import tf_keras; import jax" 2>/dev/null || {
     echo -e "${YELLOW}Missing packages detected. Installing requirements...${RESET}"
-    pip install tf-keras
+    pip install "numpy<2.0.0" tf-keras
     pip install -r requirements.txt
 }
 
