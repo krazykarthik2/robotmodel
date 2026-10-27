@@ -35,7 +35,7 @@ python -c "import octo; import dlimp; import tf_keras; import jax" 2>/dev/null |
 }
 
 # Check if pretrained Octo Small weights exist locally, download if missing
-if [ ! -f "octo_small_checkpoint/config.json" ] || [ ! -f "octo_small_checkpoint/300000/default/checkpoint" ]; then
+if [ ! -f "octo_small_checkpoint/config.json" ] || ([ ! -f "octo_small_checkpoint/270000/default/checkpoint" ] && [ ! -f "octo_small_checkpoint/300000/default/checkpoint" ]); then
     echo -e "${CYAN}Pretrained octo_small_checkpoint missing or incomplete. Downloading files directly...${RESET}"
     python download_octo_checkpoint.py
 fi
