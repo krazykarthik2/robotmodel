@@ -9,7 +9,17 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 # 1. IMPORT TRANSFORMERS FIRST
 import transformers
-from transformers import AutoConfig, FlaxT5EncoderModel
+from transformers import AutoConfig, AutoTokenizer, FlaxT5EncoderModel
+
+# Patch AutoTokenizer to force use_fast=False if convert_slow_tokenizer fails
+_orig_auto_tok_from_pretrained = AutoTokenizer.from_pretrained
+def _patched_auto_tok(pretrained_model_name_or_path, *inputs, **kwargs):
+    try:
+        return _orig_auto_tok_from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+    except Exception:
+        kwargs["use_fast"] = False
+        return _orig_auto_tok_from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+AutoTokenizer.from_pretrained = _patched_auto_tok
 
 # 2. IMPORT JAX
 import jax
@@ -75,7 +85,6 @@ try:
                     key_name = str(key_name)
 
                 if isinstance(result, dict) and key_name not in result:
-                    # If navigating through LanguageTokenizer / T5 scope discrepancy
                     if 'FlaxT5EncoderModule' in str(key_name):
                         continue
                     elif 'encoder' in result:
