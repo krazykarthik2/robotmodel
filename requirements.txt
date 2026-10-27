@@ -1,0 +1,30 @@
+# Core Deep Learning & JAX / Flax Ecosystem
+jax>=0.4.25
+jaxlib>=0.4.25
+flax>=0.8.0
+optax>=0.1.7
+chex>=0.1.86
+
+# Vision-Language Transformer & HuggingFace
+transformers>=4.40.0
+huggingface-hub>=0.20.0
+einops>=0.8.0
+
+# 3D Simulation, Rendering & Kinematics
+pyrender>=0.1.45
+trimesh>=4.0.0
+pygame>=2.5.0
+opencv-python>=4.9.0.80
+imageio>=2.34.0
+imageio-ffmpeg>=0.4.9
+
+# Numerical Computing & Scientific Stack
+numpy>=1.26.0,<2.0.0
+scipy>=1.12.0
+transforms3d>=0.4.2
+
+# Open X-Embodiment & Robotics RL Wrappers
+gym==0.26.2
+tensorflow>=2.15.0
+tensorflow-probability>=0.23.0
+distrax>=0.1.5
