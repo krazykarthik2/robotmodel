@@ -1,30 +1,35 @@
-# Core Deep Learning & JAX / Flax Ecosystem
-jax==0.12.0.1
-jaxlib==0.12.0.1
-flax==0.12.10
-optax==0.2.5
+# Vision-Language-Action (Octo) Core Environment Requirements
+# Compatible across Python 3.10, 3.11, and 3.12 (Linux GPU & CUDA 12)
+
+# Official Octo Repository
+git+https://github.com/octo-models/octo.git@241fb3514b7c40957a86d869fecb7c7fc353f540
+
+# JAX / Flax Ecosystem (CUDA 12 compatible)
+jax[cuda12_pip]>=0.4.25
+flax>=0.8.0
+optax>=0.1.7
 chex>=0.1.86
 
 # Vision-Language Transformer & HuggingFace
-transformers==4.57.6
-huggingface-hub==0.36.2
-einops==0.8.2
+transformers>=4.40.0
+huggingface-hub>=0.20.0
+einops>=0.8.0
 
 # 3D Simulation, Rendering & Kinematics
-pyrender==0.1.45
-trimesh==5.0.0
-pygame==2.6.1
-opencv-python==5.0.0
-imageio==2.35.1
-imageio-ffmpeg==0.6.0
+pyrender>=0.1.45
+trimesh>=4.0.0
+pygame>=2.5.0
+opencv-python>=4.8.0.76
+imageio>=2.33.0
+imageio-ffmpeg>=0.4.9
 
 # Numerical Computing & Scientific Stack
-numpy==2.5.4
-scipy==1.17.1
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0
 transforms3d>=0.4.2
 
 # Open X-Embodiment & Robotics RL Wrappers
 gym==0.26.2
-tensorflow==2.20.0
-tensorflow-probability==0.25.0
+tensorflow>=2.15.0
+tensorflow-probability>=0.23.0
 distrax>=0.1.5

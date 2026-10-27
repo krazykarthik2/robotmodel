@@ -20,6 +20,13 @@ echo -e "${BOLD}${BLUE}=========================================================
 echo -e "${BOLD}${CYAN}        OCTO VLA AUTOTRAINSCALE: GPU & RESOURCE AUTO-TUNER            ${RESET}"
 echo -e "${BOLD}${BLUE}======================================================================${RESET}"
 
+# 0. Automatic Dependency Check & Auto-Installation
+echo -e "${CYAN}[0/5] Checking Required Packages (Octo, JAX GPU, etc.)...${RESET}"
+python -c "import octo; import jax" 2>/dev/null || {
+    echo -e "${YELLOW}Missing packages detected. Auto-installing requirements...${RESET}"
+    pip install -r requirements.txt
+}
+
 # 1. Inspect System Architecture & Disk Space
 AVAILABLE_DISK_GB=$(df -BG . | awk 'NR==2 {gsub(/G/,""); print $4}')
 echo -e "${CYAN}[1/5] Checking Disk & Storage:${RESET} Available Workspace Disk: ${BOLD}${AVAILABLE_DISK_GB} GB${RESET}"
