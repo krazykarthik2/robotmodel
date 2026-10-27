@@ -12,14 +12,16 @@ import transformers
 from transformers import AutoConfig, AutoTokenizer, FlaxT5EncoderModel
 from transformers.models.t5.tokenization_t5 import T5Tokenizer
 
-# Patch AutoTokenizer so it always uses the pure Python T5Tokenizer and avoids fast tokenizer bug
+# Patch AutoTokenizer directly so all T5 from_pretrained calls load T5Tokenizer cleanly
+_orig_from_pretrained = AutoTokenizer.from_pretrained
 def _patched_auto_tok(pretrained_model_name_or_path, *inputs, **kwargs):
     if "t5" in str(pretrained_model_name_or_path).lower():
-        return T5Tokenizer.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
-    return AutoTokenizer.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
-
-import octo.data.utils.text_processing as _tp
-_tp.AutoTokenizer.from_pretrained = _patched_auto_tok
+        try:
+            return T5Tokenizer.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+        except Exception:
+            pass
+    return _orig_from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+AutoTokenizer.from_pretrained = _patched_auto_tok
 
 # 2. IMPORT JAX
 import jax

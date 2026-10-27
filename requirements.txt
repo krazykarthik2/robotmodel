@@ -15,6 +15,7 @@ chex>=0.1.86
 
 # Vision-Language Transformer & HuggingFace (Transformers v4.x required; v5 dropped Flax)
 transformers>=4.40.0,<5.0.0
+sentencepiece>=0.1.99
 huggingface-hub>=0.20.0
 einops>=0.8.0
 
