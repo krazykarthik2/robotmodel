@@ -49,6 +49,13 @@ fi
 # Clean up any invalid 300000 directory so Orbax strictly uses the canonical 270000 step
 rm -rf octo_small_checkpoint/300000 2>/dev/null || true
 
+# Check if demonstration dataset exists locally, auto-generate if missing
+if [ ! -f "dobot_front_demonstrations.pkl" ]; then
+    echo -e "${CYAN}Demonstration dataset dobot_front_demonstrations.pkl not found.${RESET}"
+    echo -e "${CYAN}Generating 80 front-camera expert demonstration episodes (URDF + suction kinematics)...${RESET}"
+    python generate_front_demonstrations.py
+fi
+
 # 1. Inspect System Architecture & Disk Space
 AVAILABLE_DISK_GB=$(df -BG . | awk 'NR==2 {gsub(/G/,""); print $4}')
 echo -e "${CYAN}[1/5] Checking Disk & Storage:${RESET} Available Workspace Disk: ${BOLD}${AVAILABLE_DISK_GB} GB${RESET}"
