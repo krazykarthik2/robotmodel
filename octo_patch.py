@@ -21,6 +21,19 @@ if not hasattr(jax, 'tree_map'):
 if not hasattr(jax, 'tree_leaves'):
     jax.tree_leaves = jax.tree_util.tree_leaves
 
+# Fix google.protobuf runtime_version mismatch with newer tensorflow_metadata / tfds
+import google.protobuf
+if not hasattr(google.protobuf, 'runtime_version'):
+    class _MockDomain:
+        PUBLIC = 1
+        INTERNAL = 2
+    class _MockRuntimeVersion:
+        Domain = _MockDomain
+        @staticmethod
+        def ValidateProtobufRuntimeVersion(*args, **kwargs):
+            return True
+    google.protobuf.runtime_version = _MockRuntimeVersion()
+
 _orig_clip = jnp.clip
 def _patched_clip(a, a_min=None, a_max=None, *args, **kwargs):
     min_val = kwargs.pop('min', a_min)
