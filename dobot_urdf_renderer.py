@@ -1,11 +1,9 @@
 import os
 import sys
 
-# Configure headless offscreen rendering for pyrender
-# In Jupyter/headless environments without DISPLAY or sudo for xvfb, EGL is used.
-# pyrender's egl platform has a known bug where get_device_by_index crashes if query_devices is empty.
-# We patch pyrender.platforms.egl to safely fall back to get_default_device().
-if "PYOPENGL_PLATFORM" not in os.environ and "DISPLAY" not in os.environ:
+# Configure headless offscreen rendering for pyrender on Linux
+# In headless Linux containers without DISPLAY or sudo for xvfb, EGL is used.
+if sys.platform.startswith("linux") and "PYOPENGL_PLATFORM" not in os.environ and "DISPLAY" not in os.environ:
     os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 try:

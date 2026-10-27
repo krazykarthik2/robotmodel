@@ -63,11 +63,12 @@ fi
 # Clean up any invalid 300000 directory so Orbax strictly uses the canonical 270000 step
 rm -rf octo_small_checkpoint/300000 2>/dev/null || true
 
-# Check if demonstration dataset exists locally, generate locally if missing
+# Check if demonstration dataset exists locally, download from HF if missing
 if [ ! -f "dobot_front_demonstrations.pkl" ] || [ $(stat -c%s "dobot_front_demonstrations.pkl" 2>/dev/null || echo 0) -lt 1000000 ]; then
     echo -e "${CYAN}dobot_front_demonstrations.pkl missing or incomplete.${RESET}"
-    echo -e "${CYAN}Generating 1000 front camera demonstration episodes locally via Dobot URDF renderer...${RESET}"
-    python generate_front_demonstrations.py --episodes 1000 --output dobot_front_demonstrations.pkl
+    echo -e "${CYAN}Downloading demonstration chunks from HuggingFace dataset (karthikkrazy/dobot-front-demonstrations)...${RESET}"
+    python download_and_assemble_demos.py
+fi
 fi
 
 # 1. Inspect System Architecture & Disk Space

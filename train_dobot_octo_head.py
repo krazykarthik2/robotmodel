@@ -69,9 +69,15 @@ def train_dobot_octo(
     print(f"Stratified Dataset Split: {len(train_episodes)} Training Episodes | {len(val_episodes)} Validation Episodes")
 
     def create_samples(ep_list):
+        import io
+        from PIL import Image
         samples = []
         for ep in ep_list:
-            obs = ep["observations"]
+            # Handle both raw arrays and JPEG compressed bytes
+            if "observations_jpeg" in ep:
+                obs = [np.array(Image.open(io.BytesIO(b))) for b in ep["observations_jpeg"]]
+            else:
+                obs = ep["observations"]
             acts = ep["actions"]
             instr = ep["instruction"]
             T = len(acts)
