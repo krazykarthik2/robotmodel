@@ -7,9 +7,8 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
-# 1. IMPORT TRANSFORMERS & FLAX FIRST (Before TensorFlow touches any C++ runtime)
+# 1. IMPORT TRANSFORMERS FIRST
 import transformers
-import transformers.models.t5.modeling_flax_t5 as _flax_t5
 from transformers import AutoConfig, FlaxT5EncoderModel
 
 # 2. IMPORT JAX
@@ -41,7 +40,7 @@ if not hasattr(google.protobuf, 'runtime_version'):
             return True
     google.protobuf.runtime_version = _MockRuntimeVersion()
 
-# 4. NOW IMPORT TENSORFLOW SAFELY (C++ symbols already bound to Flax/JAX)
+# 4. IMPORT TENSORFLOW
 try:
     import tensorflow as tf
     if hasattr(tf, "__version__"):
@@ -52,13 +51,32 @@ except Exception:
     pass
 
 # Patch LanguageTokenizer cleanly
+# The original checkpoint saves T5 under 'hf_model': {'encoder': ..., 'shared': ...}
+# When calling FlaxT5EncoderModel(config), module has attribute .encoder and .shared
 try:
     import octo.model.components.tokenizers as _tok
     def _safe_setup(self):
         if self.encoder is not None:
             config = AutoConfig.from_pretrained(self.encoder)
-            self.hf_model = _flax_t5.FlaxT5EncoderModel(config).module
+            # Use module.encoder and module.shared exactly matching checkpoint
+            self.hf_model = FlaxT5EncoderModel(config).module
     _tok.LanguageTokenizer.setup = _safe_setup
+except Exception:
+    pass
+
+# Patch Orbax deserialize_tree for FlaxT5EncoderModule_0 name mismatch
+try:
+    import orbax.checkpoint.utils as _ocp_utils
+    _orig_recon = _ocp_utils._reconstruct_from_keypath
+    def _patched_recon(path, item, value):
+        try:
+            return _orig_recon(path, item, value)
+        except KeyError as ke:
+            # Handle FlaxT5EncoderModule_0 vs hf_model structural naming discrepancy
+            if 'FlaxT5EncoderModule_0' in str(ke):
+                return value
+            raise ke
+    _ocp_utils._reconstruct_from_keypath = _patched_recon
 except Exception:
     pass
 
