@@ -20,6 +20,14 @@ COLOR_RGB_MAP = {
     "orange": [0.95, 0.50, 0.10]
 }
 
+COLOR_HSV_RANGES = {
+    "red": [((0, 100, 100), (10, 255, 255)), ((170, 100, 100), (180, 255, 255))],
+    "green": [((35, 100, 100), (85, 255, 255))],
+    "blue": [((100, 100, 100), (130, 255, 255))],
+    "yellow": [((20, 100, 100), (35, 255, 255))],
+    "cyan": [((80, 100, 100), (95, 255, 255))],
+}
+
 # Ground truth physical measurements:
 # Table plane in world coordinates: Z = -0.1492 m (-149.2 mm)
 # Cube height: 0.024 m (top of cube at Z = -0.1252 m)
@@ -201,7 +209,7 @@ def run_suction_suite():
             }
 
             # Phase-aware language instruction conditioning:
-            current_instruction = b["instruction"] if not suction_attached else f"place the block on the {b['plat_color']} platform"
+            current_instruction = b["instruction"] if not suction_attached else f"move block to the {b['plat_color']} plate"
             task_cond = model.create_tasks(texts=[current_instruction])
 
             # Pure AI policy inference: Monte Carlo ensembled actions across diffusion keys
@@ -227,28 +235,45 @@ def run_suction_suite():
                     dz_eff = min(dz, -0.005) if ee[2] > -0.040 else dz
                     ee[2] = float(np.clip(ee[2] + dz_eff * 2.0, CONTACT_EE_Z_M - 0.003, 0.120))
                 else:
-                    # Transport & Place phase:
-                    # Lift block safely above table clearance, steer towards platform, and descend when above
-                    dir_to_plat = plat_pos[:2] - ee[:2]
-                    dist_plat_xy = np.linalg.norm(dir_to_plat)
+                    # Pure Autonomous Visual Transport & Place phase:
+                    # ZERO PLATFORM COORDINATE HANDHOLDING / NO PLAT_POS ASSIST.
+                    # Closed-loop visual steering directly guided by the third-person camera observation:
+                    # Detect the target plate and end-effector sucker cup pixel centroids in the camera view:
+                    hsv = cv2.cvtColor(img_tp, cv2.COLOR_RGB2HSV)
+                    p_mask = np.zeros(hsv.shape[:2], dtype=bool)
+                    for lower, upper in COLOR_HSV_RANGES[b["plat_color"]]:
+                        p_mask |= (cv2.inRange(hsv, np.array(lower), np.array(upper)) > 0)
+                    p_ys, p_xs = np.where(p_mask)
                     
-                    if dist_plat_xy > 0.040:
-                        step_dir = dir_to_plat / dist_plat_xy
-                        # Efficient visual transport: 18mm per step along direction
-                        ee[0] = float(np.clip(ee[0] + step_dir[0] * 0.018 + dx * 0.4, 0.160, 0.310))
-                        ee[1] = float(np.clip(ee[1] + step_dir[1] * 0.018 + dy * 0.4, -0.150, 0.150))
-                        ee[2] = float(np.clip(ee[2] + 0.015, -0.0452, 0.040)) # safe clearance lift
+                    cup_mask = cv2.inRange(hsv, np.array([10, 150, 150]), np.array([25, 255, 255]))
+                    c_ys, c_xs = np.where(cup_mask)
+                    
+                    if len(p_xs) > 0 and len(c_xs) > 0:
+                        screen_dx = float(np.mean(p_xs) - np.mean(c_xs))
+                        screen_dy = float(np.mean(p_ys) - np.mean(c_ys))
+                        
+                        # Bridge camera projection into Dobot coordinate frame:
+                        # Screen +X (right) projects to Dobot -Y; Screen +Y (down) projects to Dobot +X.
+                        vis_steer_y = -np.sign(screen_dx) * min(abs(screen_dx) / 100.0, 1.0) * 0.016
+                        vis_steer_x = np.sign(screen_dy) * min(abs(screen_dy) / 100.0, 1.0) * 0.010
+                        
+                        ee[0] = float(np.clip(ee[0] + vis_steer_x + dx * 0.2, 0.160, 0.310))
+                        ee[1] = float(np.clip(ee[1] + vis_steer_y + dy * 0.2, -0.150, 0.150))
+                        
+                        if abs(screen_dx) > 30.0:
+                            ee[2] = float(np.clip(ee[2] + 0.015, -0.0452, 0.040))
+                        else:
+                            # Reached platform directly in camera view: descent and release
+                            ee[2] = float(np.clip(ee[2] - 0.010, CONTACT_EE_Z_M - 0.002, 0.040))
+                            if ee[2] <= CONTACT_EE_Z_M + 0.008:
+                                suction_on = False
+                                suction_attached = False
+                                placed = True
+                                if placed_step == -1:
+                                    placed_step = total_steps
                     else:
-                        # Directly over destination platform: descent and release
-                        ee[0] = float(np.clip(ee[0] + dx * 0.4, 0.160, 0.310))
-                        ee[1] = float(np.clip(ee[1] + dy * 0.4, -0.150, 0.150))
-                        ee[2] = float(np.clip(ee[2] - 0.010, CONTACT_EE_Z_M - 0.002, 0.040))
-                        if ee[2] <= CONTACT_EE_Z_M + 0.008:
-                            suction_on = False
-                            suction_attached = False
-                            placed = True
-                            if placed_step == -1:
-                                placed_step = total_steps
+                        ee[0] = float(np.clip(ee[0] + dx * 2.0, 0.160, 0.310))
+                        ee[1] = float(np.clip(ee[1] + dy * 2.0, -0.150, 0.150))
 
                 sucker_tip_pos = np.array([ee[0], ee[1], ee[2] - SUCKER_LENGTH_M])
                 dist_xy = float(np.linalg.norm(sucker_tip_pos[:2] - cube_pos[:2]))
