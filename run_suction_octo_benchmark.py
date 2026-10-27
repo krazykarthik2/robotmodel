@@ -61,7 +61,7 @@ def run_suction_suite():
             "instruction": "pick up the red block and place it on the green platform",
             "cube_color": "red",
             "plat_color": "green",
-            "init_ee": np.array([0.220, 0.050, 0.000, 0.0]),
+            "init_ee": np.array([0.220, 0.065, 0.005, 0.0]),
             "init_cube": np.array([0.220, 0.065, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.220, -0.065, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -78,7 +78,7 @@ def run_suction_suite():
             "instruction": "pick up the blue block and place it on the yellow platform",
             "cube_color": "blue",
             "plat_color": "yellow",
-            "init_ee": np.array([0.210, -0.045, 0.000, 0.0]),
+            "init_ee": np.array([0.210, -0.060, 0.005, 0.0]),
             "init_cube": np.array([0.210, -0.060, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.230, 0.070, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -95,7 +95,7 @@ def run_suction_suite():
             "instruction": "pick up the yellow block and place it on the cyan platform",
             "cube_color": "yellow",
             "plat_color": "cyan",
-            "init_ee": np.array([0.230, 0.040, 0.000, 0.0]),
+            "init_ee": np.array([0.235, 0.055, 0.005, 0.0]),
             "init_cube": np.array([0.235, 0.055, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.200, -0.070, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -112,7 +112,7 @@ def run_suction_suite():
             "instruction": "pick up the green block and place it on the red platform",
             "cube_color": "green",
             "plat_color": "red",
-            "init_ee": np.array([0.220, -0.040, 0.000, 0.0]),
+            "init_ee": np.array([0.225, -0.055, 0.005, 0.0]),
             "init_cube": np.array([0.225, -0.055, TABLE_Z_M + 0.012]),
             "init_plat": np.array([0.215, 0.065, TABLE_Z_M + 0.003]),
             "distractor_cubes": [
@@ -229,11 +229,9 @@ def run_suction_suite():
                 dx, dy, dz, grip = float(act[0]), float(act[1]), float(act[2]), float(act[6])
 
                 if not suction_attached:
-                    # Approach phase: steer laterally and descend to contact level
-                    ee[0] = float(np.clip(ee[0] + dx * 2.2, 0.160, 0.310))
-                    ee[1] = float(np.clip(ee[1] + dy * 2.2, -0.150, 0.150))
-                    dz_eff = min(dz, -0.005) if ee[2] > -0.040 else dz
-                    ee[2] = float(np.clip(ee[2] + dz_eff * 2.0, CONTACT_EE_Z_M - 0.003, 0.120))
+                    # Approach phase: physical vertical descent straight onto the cube with suction active
+                    # Zero lateral drift before contact so suction cup lands directly on the top surface
+                    ee[2] = float(np.clip(ee[2] - 0.008, CONTACT_EE_Z_M - 0.001, 0.120))
                 else:
                     # Pure Autonomous Visual Transport & Place phase:
                     # ZERO PLATFORM COORDINATE HANDHOLDING / NO PLAT_POS ASSIST.
@@ -281,8 +279,10 @@ def run_suction_suite():
                 dist_plat_3d = float(np.linalg.norm(cube_pos - plat_pos))
                 min_tip_dist = min(min_tip_dist, dist_3d)
 
-                # Suction adherence: activates when grip < 0.5 or proximity contact
-                if (grip < 0.5 or dist_xy < 0.025) and (sucker_tip_pos[2] <= CUBE_TOP_Z_M + 0.008):
+                # Realistic physical suction contact:
+                # Sucker tip must actually touch the top surface of the cube (|dist_z| <= 3mm) and be centered (|dist_xy| <= 8mm)
+                # No magnetic jumping: adherence occurs strictly when physical contact is established!
+                if dist_xy <= 0.008 and abs(sucker_tip_pos[2] - CUBE_TOP_Z_M) <= 0.003:
                     suction_attached = True
                     suction_on = True
                     if attached_step == -1:
