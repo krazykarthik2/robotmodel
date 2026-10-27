@@ -21,9 +21,10 @@ echo -e "${BOLD}${CYAN}        OCTO VLA AUTOTRAINSCALE: GPU & RESOURCE AUTO-TUNE
 echo -e "${BOLD}${BLUE}======================================================================${RESET}"
 
 # 0. Automatic Dependency Check & Auto-Installation
-echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, JAX GPU, etc.)...${RESET}"
-python -c "import octo; import dlimp; import jax" 2>/dev/null || {
-    echo -e "${YELLOW}Missing packages detected. Installing/upgrading requirements...${RESET}"
+echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, JAX GPU)...${RESET}"
+python -c "import octo; import dlimp; import tf_keras; import jax" 2>/dev/null || {
+    echo -e "${YELLOW}Missing packages detected. Installing requirements...${RESET}"
+    pip install tf-keras
     pip install -r requirements.txt
 }
 
