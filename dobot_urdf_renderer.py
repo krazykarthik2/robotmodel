@@ -2,15 +2,16 @@ import os
 import sys
 
 # Configure headless offscreen rendering for pyrender on Linux
-# In headless Linux containers without DISPLAY or sudo for xvfb, EGL is used.
-if sys.platform.startswith("linux") and "PYOPENGL_PLATFORM" not in os.environ and "DISPLAY" not in os.environ:
+# In headless Linux containers without DISPLAY or sudo for xvfb, surfaceless EGL is used.
+if sys.platform.startswith("linux") and "DISPLAY" not in os.environ:
     os.environ["PYOPENGL_PLATFORM"] = "egl"
+    os.environ["EGL_PLATFORM"] = "surfaceless"
 
 try:
     import pyrender.platforms.egl as _pyrender_egl
     # In headless containers, query_devices() fails or returns [] because of hypervisor restrictions.
     # Force get_device_by_index and get_default_device to return EGLDevice(None) directly,
-    # which binds egl.EGL_DEFAULT_DISPLAY without crashing.
+    # which binds egl.EGL_DEFAULT_DISPLAY in surfaceless mode without crashing.
     def _safe_get_device(device_id=0):
         return _pyrender_egl.EGLDevice(None)
     _pyrender_egl.get_device_by_index = _safe_get_device
