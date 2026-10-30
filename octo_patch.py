@@ -94,41 +94,6 @@ try:
 except Exception:
     pass
 
-# 5. ROBUST KEYPATH RECONSTRUCTION FOR ALL SUBMODULES
-try:
-    import orbax.checkpoint.utils as _ocp_utils
-    from orbax.checkpoint.utils import get_key_name, is_empty_or_leaf
-
-    def patched_deserialize_tree(serialized, target, keep_empty_nodes: bool = False):
-        def _reconstruct_from_keypath(keypath, _):
-            result = serialized
-            for key in keypath:
-                key_name = get_key_name(key)
-                if not isinstance(result, list) and key_name not in result:
-                    key_name = str(key_name)
-
-                # Clean direct lookup without misrouting nested scopes
-
-                if isinstance(result, dict) and key_name in result:
-                    result = result[key_name]
-                else:
-                    return result
-            return result
-
-        return jax.tree_util.tree_map_with_path(
-            _reconstruct_from_keypath,
-            target,
-            is_leaf=is_empty_or_leaf if keep_empty_nodes else None,
-        )
-
-    _ocp_utils.deserialize_tree = patched_deserialize_tree
-    import orbax.checkpoint.pytree_checkpoint_handler as _pch
-    _pch.utils.deserialize_tree = patched_deserialize_tree
-    if hasattr(_pch, 'deserialize_tree'):
-        _pch.deserialize_tree = patched_deserialize_tree
-except Exception as e:
-    pass
-
 _orig_clip = jnp.clip
 def _patched_clip(a, a_min=None, a_max=None, *args, **kwargs):
     min_val = kwargs.pop('min', a_min)
