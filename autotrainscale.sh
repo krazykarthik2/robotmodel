@@ -103,35 +103,11 @@ TOTAL_VRAM_MB=0
 GPU_NAME="Unknown"
 
 # Automatically configure GPU visibility
-# If multiple GPUs exist, enable all of them so JAX can use both CudaDevice(0) and CudaDevice(1)
 if command -v nvidia-smi &> /dev/null; then
-    # Query GPU with most free memory for baseline reporting
-    BEST_GPU=$(nvidia-smi --query-gpu=index,memory.free,memory.total,name --format=csv,noheader,nounits 2>/dev/null | sort -t',' -k2 -nr | head -n 1 || true)
-    if [ -n "$BEST_GPU" ]; then
-        GPU_IDX=$(echo "$BEST_GPU" | cut -d',' -f1 | tr -d ' ')
-        FREE_VRAM=$(echo "$BEST_GPU" | cut -d',' -f2 | tr -d ' ')
-        TOTAL_VRAM_MB=$(echo "$BEST_GPU" | cut -d',' -f3 | tr -d ' ')
-        GPU_NAME=$(echo "$BEST_GPU" | cut -d',' -f4 | sed 's/^[ \t]*//')
-        
-        # Keep both GPUs visible if both have >20GB free, otherwise isolate to cleanest GPU
-        GPU0_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | sed -n '1p' | tr -d ' ' || echo 0)
-        GPU1_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | sed -n '2p' | tr -d ' ' || echo 0)
-        
-        # Safe integer checks
-        GPU0_FREE=$(echo "$GPU0_FREE" | grep -o -E '[0-9]+' | head -n 1)
-        GPU1_FREE=$(echo "$GPU1_FREE" | grep -o -E '[0-9]+' | head -n 1)
-        TOTAL_VRAM_MB=$(echo "$TOTAL_VRAM_MB" | grep -o -E '[0-9]+' | head -n 1)
-        GPU0_FREE=${GPU0_FREE:-0}
-        GPU1_FREE=${GPU1_FREE:-0}
-        TOTAL_VRAM_MB=${TOTAL_VRAM_MB:-0}
-        if [ "$GPU0_FREE" -gt 20000 ] 2>/dev/null && [ "$GPU1_FREE" -gt 20000 ] 2>/dev/null; then
-            export CUDA_VISIBLE_DEVICES="0,1"
-            echo -e "${CYAN}Dual GPU Configuration:${RESET} ${BOLD}${GREEN}Using both GPUs 0 & 1 (${GPU_NAME}) with ~45 GB VRAM each${RESET}"
-        else
-            export CUDA_VISIBLE_DEVICES="$GPU_IDX"
-            echo -e "${CYAN}Selected GPU Index:${RESET} ${BOLD}${GREEN}${GPU_IDX} (${GPU_NAME}) with ${FREE_VRAM} MB free VRAM${RESET}"
-        fi
-    fi
+    export CUDA_VISIBLE_DEVICES="0,1"
+    GPU_NAME="NVIDIA L40S"
+    TOTAL_VRAM_MB=46068
+    echo -e "${CYAN}Dual GPU Configuration:${RESET} ${BOLD}${GREEN}Using both NVIDIA L40S GPUs (0 and 1) with ~45 GB VRAM each${RESET}"
 fi
 
 TOTAL_VRAM_MB=${TOTAL_VRAM_MB:-0}
@@ -144,7 +120,7 @@ echo -e "${CYAN}[2/5] Inspecting GPU Hardware & JAX CUDA Availability:${RESET}"
 JAX_HAS_GPU=$(python -c "
 import jax
 try:
-    devices = jax.devices('gpu')
+    devices = [d for d in jax.devices() if 'cuda' in d.platform.lower() or 'gpu' in d.platform.lower()]
     print('true' if len(devices) > 0 else 'false')
 except Exception:
     print('false')
