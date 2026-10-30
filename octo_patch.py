@@ -51,12 +51,16 @@ except Exception:
     pass
 
 # Patch LanguageTokenizer cleanly
+# In official Octo, LanguageTokenizer delegates to FlaxAutoModel / FlaxT5EncoderModel.
+# Using FlaxAutoModel.from_config preserves the exact Flax scope hierarchy ('hf_model' -> 'shared', 'encoder')
+# matching Octo's pre-trained checkpoint weights.
 try:
     import octo.model.components.tokenizers as _tok
+    from transformers import AutoConfig, FlaxAutoModel
     def _safe_setup(self):
         if self.encoder is not None:
             config = AutoConfig.from_pretrained(self.encoder)
-            self.hf_model = FlaxT5EncoderModel(config).module
+            self.hf_model = FlaxAutoModel.from_config(config).module
     _tok.LanguageTokenizer.setup = _safe_setup
 except Exception:
     pass
