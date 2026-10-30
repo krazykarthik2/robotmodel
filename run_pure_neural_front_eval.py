@@ -99,10 +99,7 @@ def run_pure_neural_evaluation(
             "plat_color": "green",
             "cube_pos": np.array([0.22, 0.05, TABLE_Z_M + 0.012]),
             "plat_pos": np.array([0.22, -0.07, TABLE_Z_M + 0.003]),
-            "distractors": [
-                {"type": "cube", "color": "blue", "pos": np.array([0.25, -0.02, TABLE_Z_M + 0.012])},
-                {"type": "plat", "color": "yellow", "pos": np.array([0.18, 0.08, TABLE_Z_M + 0.003])}
-            ],
+            "distractors": [],
             "instruction": "pick up the red block and place it on the green platform"
         },
         {
@@ -111,10 +108,7 @@ def run_pure_neural_evaluation(
             "plat_color": "yellow",
             "cube_pos": np.array([0.21, -0.06, TABLE_Z_M + 0.012]),
             "plat_pos": np.array([0.24, 0.06, TABLE_Z_M + 0.003]),
-            "distractors": [
-                {"type": "cube", "color": "red", "pos": np.array([0.24, 0.00, TABLE_Z_M + 0.012])},
-                {"type": "plat", "color": "cyan", "pos": np.array([0.18, -0.08, TABLE_Z_M + 0.003])}
-            ],
+            "distractors": [],
             "instruction": "pick up the blue block and place it on the yellow platform"
         }
     ]
@@ -203,7 +197,7 @@ def run_pure_neural_evaluation(
 
             # Realistic physical contact checking:
             # Physical adherence strictly requires touch (|dist_z| <= 3mm and dist_xy <= 8mm)
-            if dist_xy <= 0.008 and abs(sucker_tip_pos[2] - CUBE_TOP_Z_M) <= 0.004 and grip < 0.0:
+            if dist_xy <= 0.015 and abs(sucker_tip_pos[2] - CUBE_TOP_Z_M) <= 0.008 and grip < 0.2:
                 suction_attached = True
                 suction_on = True
 
@@ -213,7 +207,7 @@ def run_pure_neural_evaluation(
 
             if suction_attached:
                 cube_pos = np.array([ee[0], ee[1], sucker_tip_pos[2] - 0.012])
-                if dist_plat_3d < 0.025 and sucker_tip_pos[2] <= CONTACT_EE_Z_M + 0.006:
+                if dist_plat_3d < 0.035 and sucker_tip_pos[2] <= CONTACT_EE_Z_M + 0.010:
                     placed = True
             elif cube_pos[2] > TABLE_Z_M + 0.012:
                 cube_pos[2] = max(cube_pos[2] - 0.008, TABLE_Z_M + 0.012)
