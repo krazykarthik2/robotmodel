@@ -6,7 +6,7 @@
 # thread pooling, and system resources.
 # ==============================================================================
 
-set -eo pipefail
+set -o pipefail
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -105,9 +105,8 @@ GPU_NAME="Unknown"
 # Automatically configure GPU visibility
 # If multiple GPUs exist, enable all of them so JAX can use both CudaDevice(0) and CudaDevice(1)
 if command -v nvidia-smi &> /dev/null; then
-    NUM_GPUS=$(nvidia-smi --query-gpu=count --format=csv,noheader | head -n 1 || echo 1)
     # Query GPU with most free memory for baseline reporting
-    BEST_GPU=$(nvidia-smi --query-gpu=index,memory.free,memory.total,name --format=csv,noheader,nounits | sort -t',' -k2 -nr | head -n 1)
+    BEST_GPU=$(nvidia-smi --query-gpu=index,memory.free,memory.total,name --format=csv,noheader,nounits 2>/dev/null | sort -t',' -k2 -nr | head -n 1 || true)
     if [ -n "$BEST_GPU" ]; then
         GPU_IDX=$(echo "$BEST_GPU" | cut -d',' -f1 | tr -d ' ')
         FREE_VRAM=$(echo "$BEST_GPU" | cut -d',' -f2 | tr -d ' ')
@@ -115,9 +114,13 @@ if command -v nvidia-smi &> /dev/null; then
         GPU_NAME=$(echo "$BEST_GPU" | cut -d',' -f4 | sed 's/^[ \t]*//')
         
         # Keep both GPUs visible if both have >20GB free, otherwise isolate to cleanest GPU
-        GPU0_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sed -n '1p' | tr -d ' ')
-        GPU1_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sed -n '2p' | tr -d ' ' || echo 0)
-        if [ "$GPU0_FREE" -gt 20000 ] && [ "$GPU1_FREE" -gt 20000 ]; then
+        GPU0_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | sed -n '1p' | tr -d ' ' || echo 0)
+        GPU1_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | sed -n '2p' | tr -d ' ' || echo 0)
+        
+        # Safe integer checks
+        GPU0_FREE=${GPU0_FREE:-0}
+        GPU1_FREE=${GPU1_FREE:-0}
+        if [ "$GPU0_FREE" -gt 20000 ] 2>/dev/null && [ "$GPU1_FREE" -gt 20000 ] 2>/dev/null; then
             export CUDA_VISIBLE_DEVICES="0,1"
             echo -e "${CYAN}Dual GPU Configuration:${RESET} ${BOLD}${GREEN}Using both GPUs 0 & 1 (${GPU_NAME}) with ~45 GB VRAM each${RESET}"
         else
