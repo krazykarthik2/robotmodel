@@ -20,6 +20,26 @@ echo -e "${BOLD}${BLUE}=========================================================
 echo -e "${BOLD}${CYAN}        OCTO VLA AUTOTRAINSCALE: GPU & RESOURCE AUTO-TUNER            ${RESET}"
 echo -e "${BOLD}${BLUE}======================================================================${RESET}"
 
+# Activate conda environment 'octo_env' if available
+if command -v conda &> /dev/null; then
+    eval "$(conda shell.bash hook 2>/dev/null || true)"
+    if conda env list | grep -q "octo_env"; then
+        echo -e "${CYAN}Activating conda environment: ${BOLD}octo_env${RESET}..."
+        conda activate octo_env
+    fi
+elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+    conda activate octo_env 2>/dev/null || true
+elif [ -f "/opt/tljh/user/etc/profile.d/conda.sh" ]; then
+    source "/opt/tljh/user/etc/profile.d/conda.sh"
+    conda activate octo_env 2>/dev/null || true
+fi
+
+# Ensure system EGL and conda library paths are exported
+export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH"
+export PYOPENGL_PLATFORM="egl"
+export EGL_PLATFORM="surfaceless"
+
 # 0. Automatic Dependency Check & Auto-Installation
 echo -e "${CYAN}[0/5] Checking Required Packages (Octo, dlimp, tf_keras, pycollada, xvfb, NumPy < 2.0, Transformers < 5.0)...${RESET}"
 # Check if Xvfb or virtual display tools are needed for headless pyrender
