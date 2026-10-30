@@ -89,7 +89,6 @@ if [ ! -f "dobot_front_demonstrations.pkl" ] || [ $(stat -c%s "dobot_front_demon
     echo -e "${CYAN}Downloading demonstration chunks from HuggingFace dataset (karthikkrazy/dobot-front-demonstrations)...${RESET}"
     python download_and_assemble_demos.py
 fi
-fi
 
 # 1. Inspect System Architecture & Disk Space
 AVAILABLE_DISK_GB=$(df -BG . | awk 'NR==2 {gsub(/G/,""); print $4}')
