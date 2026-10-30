@@ -54,6 +54,7 @@ except Exception:
 try:
     import octo.model.components.tokenizers as _tok
     import flax.linen as nn
+    import numpy as np
 
     # Override LanguageTokenizer.__call__ to safely check for pre-embedded tokens
     _orig_lang_call = _tok.LanguageTokenizer.__call__
