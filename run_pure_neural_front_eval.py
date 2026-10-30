@@ -145,8 +145,8 @@ def run_pure_neural_evaluation(
                 cube_color_rgb=COLOR_RGB_MAP[b["cube_color"]],
                 plat_pos=plat_pos,
                 plat_color_rgb=COLOR_RGB_MAP[b["plat_color"]],
-                distractor_cubes=[d for d in b["distractors"] if d["type"] == "cube"],
-                distractor_plats=[d for d in b["distractors"] if d["type"] == "plat"],
+                distractor_cubes=[(COLOR_RGB_MAP[d["color"]], d["pos"]) for d in b["distractors"] if d["type"] == "cube"],
+                distractor_plats=[(COLOR_RGB_MAP[d["color"]], d["pos"]) for d in b["distractors"] if d["type"] == "plat"],
                 end_effector="suction"
             )
             raw_rgb = render_front_camera_view(renderer, s, cam)
