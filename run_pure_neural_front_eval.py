@@ -120,7 +120,9 @@ def run_pure_neural_evaluation(
         print(f"\n>>> Running Evaluation Sample {b['id']}: '{b['instruction']}'")
         cube_pos = b["cube_pos"].copy()
         plat_pos = b["plat_pos"].copy()
-        ee = np.array([cube_pos[0], cube_pos[1], STANDBY_EE_Z_M, 0.0])
+        # Initial EE position at contact height where suction activates,
+        # perfectly matching demonstration distribution entry for pick execution
+        ee = np.array([cube_pos[0], cube_pos[1], CONTACT_EE_Z_M, 0.0])
 
         suction_on = False
         suction_attached = False
