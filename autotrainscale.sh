@@ -102,9 +102,11 @@ HAS_GPU=false
 TOTAL_VRAM_MB=0
 GPU_NAME="Unknown"
 
-# Automatically find and select the first available/unlocked GPU with the most free VRAM
+# Automatically configure GPU visibility
+# If multiple GPUs exist, enable all of them so JAX can use both CudaDevice(0) and CudaDevice(1)
 if command -v nvidia-smi &> /dev/null; then
-    # Query GPU index and free memory sorted by free memory descending
+    NUM_GPUS=$(nvidia-smi --query-gpu=count --format=csv,noheader | head -n 1 || echo 1)
+    # Query GPU with most free memory for baseline reporting
     BEST_GPU=$(nvidia-smi --query-gpu=index,memory.free,memory.total,name --format=csv,noheader,nounits | sort -t',' -k2 -nr | head -n 1)
     if [ -n "$BEST_GPU" ]; then
         GPU_IDX=$(echo "$BEST_GPU" | cut -d',' -f1 | tr -d ' ')
@@ -112,9 +114,16 @@ if command -v nvidia-smi &> /dev/null; then
         TOTAL_VRAM_MB=$(echo "$BEST_GPU" | cut -d',' -f3 | tr -d ' ')
         GPU_NAME=$(echo "$BEST_GPU" | cut -d',' -f4 | sed 's/^[ \t]*//')
         
-        # Export CUDA_VISIBLE_DEVICES so JAX directly binds to the free GPU
-        export CUDA_VISIBLE_DEVICES="$GPU_IDX"
-        echo -e "${CYAN}Selected GPU Index:${RESET} ${BOLD}${GREEN}${GPU_IDX} (${GPU_NAME}) with ${FREE_VRAM} MB free VRAM${RESET}"
+        # Keep both GPUs visible if both have >20GB free, otherwise isolate to cleanest GPU
+        GPU0_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sed -n '1p' | tr -d ' ')
+        GPU1_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sed -n '2p' | tr -d ' ' || echo 0)
+        if [ "$GPU0_FREE" -gt 20000 ] && [ "$GPU1_FREE" -gt 20000 ]; then
+            export CUDA_VISIBLE_DEVICES="0,1"
+            echo -e "${CYAN}Dual GPU Configuration:${RESET} ${BOLD}${GREEN}Using both GPUs 0 & 1 (${GPU_NAME}) with ~45 GB VRAM each${RESET}"
+        else
+            export CUDA_VISIBLE_DEVICES="$GPU_IDX"
+            echo -e "${CYAN}Selected GPU Index:${RESET} ${BOLD}${GREEN}${GPU_IDX} (${GPU_NAME}) with ${FREE_VRAM} MB free VRAM${RESET}"
+        fi
     fi
 fi
 
