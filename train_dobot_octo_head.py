@@ -32,12 +32,17 @@ def train_dobot_octo(
     # Check if local checkpoint exists, otherwise load directly from HuggingFace
     if os.path.exists("octo_small_checkpoint/config.json"):
         model_source = "octo_small_checkpoint"
-        # If step 270000 exists, explicitly specify it so Orbax doesn't search for nonexistent steps
-        load_step = 270000 if os.path.exists("octo_small_checkpoint/270000") else None
+        # Always specify step 270000 for octo-small so Orbax restores the verified 270000 checkpoint
+        if os.path.exists("octo_small_checkpoint/270000"):
+            load_step = 270000
+        elif os.path.exists("octo_small_checkpoint/300000"):
+            load_step = 300000
+        else:
+            load_step = 270000
     else:
         print("Local octo_small_checkpoint not found on disk. Auto-downloading from HuggingFace (hf://rail-berkeley/octo-small)...")
         model_source = "hf://rail-berkeley/octo-small"
-        load_step = None
+        load_step = 270000
 
     model = OctoModel.load_pretrained(model_source, step=load_step)
     stats = model.dataset_statistics["bridge_dataset"]["action"]

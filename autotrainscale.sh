@@ -102,10 +102,20 @@ HAS_GPU=false
 TOTAL_VRAM_MB=0
 GPU_NAME="Unknown"
 
+# Automatically find and select the first available/unlocked GPU with the most free VRAM
 if command -v nvidia-smi &> /dev/null; then
-    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1 || echo "Unknown")
-    TOTAL_VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n 1 || echo 0)
-    TOTAL_VRAM_MB=$(echo "$TOTAL_VRAM_MB" | tr -d ' ')
+    # Query GPU index and free memory sorted by free memory descending
+    BEST_GPU=$(nvidia-smi --query-gpu=index,memory.free,memory.total,name --format=csv,noheader,nounits | sort -t',' -k2 -nr | head -n 1)
+    if [ -n "$BEST_GPU" ]; then
+        GPU_IDX=$(echo "$BEST_GPU" | cut -d',' -f1 | tr -d ' ')
+        FREE_VRAM=$(echo "$BEST_GPU" | cut -d',' -f2 | tr -d ' ')
+        TOTAL_VRAM_MB=$(echo "$BEST_GPU" | cut -d',' -f3 | tr -d ' ')
+        GPU_NAME=$(echo "$BEST_GPU" | cut -d',' -f4 | sed 's/^[ \t]*//')
+        
+        # Export CUDA_VISIBLE_DEVICES so JAX directly binds to the free GPU
+        export CUDA_VISIBLE_DEVICES="$GPU_IDX"
+        echo -e "${CYAN}Selected GPU Index:${RESET} ${BOLD}${GREEN}${GPU_IDX} (${GPU_NAME}) with ${FREE_VRAM} MB free VRAM${RESET}"
+    fi
 fi
 
 TOTAL_VRAM_GB=$((TOTAL_VRAM_MB / 1024))
