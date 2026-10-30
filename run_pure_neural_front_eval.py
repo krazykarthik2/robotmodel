@@ -65,7 +65,24 @@ def run_pure_neural_evaluation(
         return
 
     print("Loading fine-tuned Octo VLA model...")
-    model = OctoModel.load_pretrained(checkpoint_path)
+    # Load base model weights
+    base_src = "octo_small_checkpoint" if os.path.exists("octo_small_checkpoint/config.json") else "hf://rail-berkeley/octo-small"
+    model = OctoModel.load_pretrained(base_src, step=270000)
+    # Restore fine-tuned action head parameters
+    head_file = os.path.join(checkpoint_path, "action_head_params.pkl")
+    full_file = os.path.join(checkpoint_path, "full_model_params.pkl")
+    if os.path.exists(full_file):
+        with open(full_file, "rb") as f:
+            new_params = pickle.load(f)
+        model = model.replace(params=new_params)
+        print("Restored full fine-tuned model parameters.")
+    elif os.path.exists(head_file):
+        with open(head_file, "rb") as f:
+            head_params = pickle.load(f)
+        new_params = copy.copy(model.params)
+        new_params["heads_action"] = head_params
+        model = model.replace(params=new_params)
+        print("Restored fine-tuned action head parameters.")
     stats = model.dataset_statistics["bridge_dataset"]["action"]
     print("Fine-tuned model loaded successfully.")
 

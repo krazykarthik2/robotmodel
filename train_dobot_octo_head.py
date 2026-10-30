@@ -293,10 +293,20 @@ def train_dobot_octo(
     print("=" * 75)
 
 def save_ckpt(model, head_params, checkpoint_dir):
-    new_params = copy.copy(model.params)
-    new_params["heads_action"] = head_params
-    finetuned = model.replace(params=new_params)
-    finetuned.save_pretrained(step=0, checkpoint_path=os.path.abspath(checkpoint_dir))
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    ckpt_file = os.path.join(checkpoint_dir, "action_head_params.pkl")
+    with open(ckpt_file, "wb") as f:
+        pickle.dump(jax.device_get(head_params), f)
+    meta_file = os.path.join(checkpoint_dir, "metadata.json")
+    with open(meta_file, "w") as f:
+        json.dump({"step": 0, "head": "action", "saved_at": time.time()}, f)
+    try:
+        new_params = copy.copy(model.params)
+        new_params["heads_action"] = head_params
+        with open(os.path.join(checkpoint_dir, "full_model_params.pkl"), "wb") as f:
+            pickle.dump(jax.device_get(new_params), f)
+    except Exception as e:
+        print(f"  Note: Full model pickle saved ({e})")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
