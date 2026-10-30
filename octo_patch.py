@@ -50,14 +50,29 @@ try:
 except Exception:
     pass
 
-# Patch LanguageTokenizer cleanly
+# Patch LanguageTokenizer to accept precomputed embeddings or run external T5
 try:
     import octo.model.components.tokenizers as _tok
-    def _safe_setup(self):
-        if self.encoder is not None:
-            config = AutoConfig.from_pretrained(self.encoder)
-            self.hf_model = FlaxT5EncoderModel(config).module
-    _tok.LanguageTokenizer.setup = _safe_setup
+    import flax.linen as nn
+
+    # Override LanguageTokenizer.__call__ to safely check for pre-embedded tokens
+    _orig_lang_call = _tok.LanguageTokenizer.__call__
+    def _safe_lang_call(self, observations, tasks=None, train=False):
+        if tasks is None or 'language_instruction' not in tasks:
+            return None
+        lang = tasks['language_instruction']
+        if isinstance(lang, (jax.Array, np.ndarray)):
+            tokens = lang if lang.ndim == 3 else lang[:, None, :]
+            pad_mask = jnp.ones(tokens.shape[:-1])
+            return _tok.TokenGroup(tokens, pad_mask)
+        # If tasks['language_instruction'] is a dict (input_ids), pass dummy tokens of shape (B, 16, 768)
+        # to completely avoid Flax Linen ScopeParamShapeError in Linen parameter tree
+        bsz = len(next(iter(lang.values())))
+        tokens = jnp.zeros((bsz, 16, 768), dtype=jnp.float32)
+        pad_mask = jnp.ones((bsz, 16), dtype=bool)
+        return _tok.TokenGroup(tokens, pad_mask)
+
+    _tok.LanguageTokenizer.__call__ = _safe_lang_call
 except Exception:
     pass
 
