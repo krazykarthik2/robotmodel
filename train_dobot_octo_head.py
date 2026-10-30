@@ -87,16 +87,42 @@ def train_dobot_octo(
             acts = ep["actions"]
             instr = ep["instruction"]
             T = len(acts)
-            for t in range(1, T - 4):
-                obs_win = obs[t-1:t+1]
-                act_horizon = acts[t:t+4]
+
+            # Extract samples across entire trajectory covering all timesteps 0..T-1
+            for t in range(0, T):
+                if t == 0:
+                    obs_win = [obs[0], obs[0]]
+                    t_indices = np.array([0, 0], dtype=np.int32)
+                else:
+                    obs_win = [obs[t-1], obs[t]]
+                    t_indices = np.array([t-1, t], dtype=np.int32)
+
+                # Horizon 4 future actions (replicate final action if near episode boundary)
+                if t + 4 <= T:
+                    act_horizon = acts[t:t+4]
+                else:
+                    pad_len = (t + 4) - T
+                    act_horizon = np.concatenate([acts[t:], np.repeat(acts[-1:], pad_len, axis=0)], axis=0)
+
                 act_norm = (act_horizon - stats["mean"]) / stats["std"]
-                samples.append({
+                sample_item = {
                     "obs": obs_win,
                     "act_norm": act_norm,
                     "text": instr,
-                    "timestep": np.array([t-1, t], dtype=np.int32)
-                })
+                    "timestep": t_indices
+                }
+                samples.append(sample_item)
+
+                # Phase Re-Balancing:
+                # In standard demonstrations, transport steps vastly dominate descent steps.
+                # Oversample early descent (t <= 4) and placement (t >= 21) to eliminate dataset mode collapse!
+                if t <= 4:
+                    # 2x oversampling for descent so robot reliably descends to cube contact
+                    samples.append(sample_item)
+                elif t >= 21:
+                    # 2x oversampling for placement & release
+                    samples.append(sample_item)
+
         return samples
 
     train_samples = create_samples(train_episodes)

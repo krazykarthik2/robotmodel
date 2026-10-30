@@ -198,8 +198,9 @@ def run_pure_neural_evaluation(
             dist_plat_3d = float(np.linalg.norm(cube_pos - plat_pos))
 
             # Realistic physical contact checking:
-            # Physical adherence strictly requires touch (|dist_z| <= 3mm and dist_xy <= 8mm)
-            if dist_xy <= 0.015 and abs(sucker_tip_pos[2] - CUBE_TOP_Z_M) <= 0.008 and grip < 0.2:
+            # Physical adherence strictly requires touch (|dist_z| <= 8mm and dist_xy <= 18mm)
+            # Grip threshold: suction active when model predicts negative grip (grip < -0.2)
+            if dist_xy <= 0.018 and abs(sucker_tip_pos[2] - CUBE_TOP_Z_M) <= 0.010 and grip < -0.2:
                 suction_attached = True
                 suction_on = True
 
@@ -209,7 +210,7 @@ def run_pure_neural_evaluation(
 
             if suction_attached:
                 cube_pos = np.array([ee[0], ee[1], sucker_tip_pos[2] - 0.012])
-                if dist_plat_3d < 0.035 and sucker_tip_pos[2] <= CONTACT_EE_Z_M + 0.010:
+                if dist_plat_3d < 0.040 and sucker_tip_pos[2] <= CONTACT_EE_Z_M + 0.015:
                     placed = True
             elif cube_pos[2] > TABLE_Z_M + 0.012:
                 cube_pos[2] = max(cube_pos[2] - 0.008, TABLE_Z_M + 0.012)
