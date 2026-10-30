@@ -146,12 +146,12 @@ def run_pure_neural_evaluation(
             raw_rgb = render_front_camera_view(renderer, s, cam)
             img_256 = cv2.resize(raw_rgb, (256, 256), interpolation=cv2.INTER_AREA)
 
-            obs_history.append(img_256)
-            if len(obs_history) > 2:
-                obs_history.pop(0)
+            if len(obs_history) == 0:
+                obs_history = [img_256, img_256]
+            else:
+                obs_history = [obs_history[1], img_256]
 
-            # Pad history to window=2 if starting
-            curr_obs = np.stack([obs_history[0], obs_history[-1]]) # (2, 256, 256, 3)
+            curr_obs = np.stack(obs_history) # (2, 256, 256, 3)
 
             # Octo inference dictionary
             obs_dict = {
@@ -162,7 +162,7 @@ def run_pure_neural_evaluation(
                     "image_wrist": np.zeros((1, 2), dtype=bool),
                     "timestep": np.ones((1, 2), dtype=bool)
                 },
-                "timestep": np.array([[step, step+1]], dtype=np.int32),
+                "timestep": np.array([[max(0, step-1), step]], dtype=np.int32),
                 "timestep_pad_mask": np.ones((1, 2), dtype=bool)
             }
             task_dict = model.create_tasks(texts=[b["instruction"]])
