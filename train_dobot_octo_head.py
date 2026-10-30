@@ -296,7 +296,7 @@ def save_ckpt(model, head_params, checkpoint_dir):
     new_params = copy.copy(model.params)
     new_params["heads_action"] = head_params
     finetuned = model.replace(params=new_params)
-    finetuned.save_pretrained(step=0, checkpoint_path=checkpoint_dir)
+    finetuned.save_pretrained(step=0, checkpoint_path=os.path.abspath(checkpoint_dir))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
