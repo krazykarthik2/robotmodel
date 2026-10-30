@@ -107,15 +107,7 @@ try:
                 if not isinstance(result, list) and key_name not in result:
                     key_name = str(key_name)
 
-                if isinstance(result, dict) and key_name not in result:
-                    if 'FlaxT5EncoderModule' in str(key_name):
-                        continue
-                    elif 'encoder' in result:
-                        result = result['encoder']
-                    elif 'shared' in result:
-                        result = result['shared']
-                    elif 'hf_model' in result:
-                        result = result['hf_model']
+                # Clean direct lookup without misrouting nested scopes
 
                 if isinstance(result, dict) and key_name in result:
                     result = result[key_name]
