@@ -118,8 +118,12 @@ if command -v nvidia-smi &> /dev/null; then
         GPU1_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | sed -n '2p' | tr -d ' ' || echo 0)
         
         # Safe integer checks
+        GPU0_FREE=$(echo "$GPU0_FREE" | grep -o -E '[0-9]+' | head -n 1)
+        GPU1_FREE=$(echo "$GPU1_FREE" | grep -o -E '[0-9]+' | head -n 1)
+        TOTAL_VRAM_MB=$(echo "$TOTAL_VRAM_MB" | grep -o -E '[0-9]+' | head -n 1)
         GPU0_FREE=${GPU0_FREE:-0}
         GPU1_FREE=${GPU1_FREE:-0}
+        TOTAL_VRAM_MB=${TOTAL_VRAM_MB:-0}
         if [ "$GPU0_FREE" -gt 20000 ] 2>/dev/null && [ "$GPU1_FREE" -gt 20000 ] 2>/dev/null; then
             export CUDA_VISIBLE_DEVICES="0,1"
             echo -e "${CYAN}Dual GPU Configuration:${RESET} ${BOLD}${GREEN}Using both GPUs 0 & 1 (${GPU_NAME}) with ~45 GB VRAM each${RESET}"
@@ -130,6 +134,9 @@ if command -v nvidia-smi &> /dev/null; then
     fi
 fi
 
+TOTAL_VRAM_MB=${TOTAL_VRAM_MB:-0}
+TOTAL_VRAM_MB=$(echo "$TOTAL_VRAM_MB" | grep -o -E '[0-9]+' | head -n 1)
+TOTAL_VRAM_MB=${TOTAL_VRAM_MB:-0}
 TOTAL_VRAM_GB=$((TOTAL_VRAM_MB / 1024))
 
 echo -e "${CYAN}[2/5] Inspecting GPU Hardware & JAX CUDA Availability:${RESET}"
